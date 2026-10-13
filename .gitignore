@@ -6,6 +6,9 @@
 !README.md
 !LICENSE
 
+# Allow wiki previews
+!Previews/
+
 # Allow tools and the ResearchKit submodule
 !TextMateBundle/
 !VolumeTools/
