@@ -1,0 +1,91 @@
+{
+	"name": "migoto",
+	"displayName": "3DMigoto",
+	"description": "Extension for working with .ini and .hlsl files used by 3DMigoto.",
+	"author": {
+		"name": "LupoMikti",
+		"url": "https://github.com/lupomikti"
+	},
+	"contributors": [
+		{
+			"name": "SinsOfSeven@sinsofseven",
+			"url": "https://github.com/SinsOfSeven"
+		},
+		{
+			"name": "!someone name has 63B long?",
+			"url": "https://github.com/lewis252310"
+		},
+		{
+			"name": "AGMG",
+			"url": "https://discord.gg/AGMG"
+		},
+		{
+			"name": "RedCraft86",
+			"url": "https://github.com/RedCraft86"
+		}
+	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/RedCraft86/RCEFBackend.git"
+	},
+	"publisher": "AGMG, RedCraft86",
+	"version": "1.0",
+	"pricing": "Free",
+	"engines": {
+		"vscode": "^1.90.0"
+	},
+	"categories": [
+		"Programming Languages"
+	],
+	"contributes": {
+		"languages": [
+			{
+				"id": "migoto-ini",
+				"aliases": [
+					"Migoto INI",
+					"3dm-ini"
+				],
+				"extensions": [
+					".ini"
+				],
+				"configuration": "./migoto-ini.language-configuration.json"
+			},
+			{
+				"id": "migoto-hlsl",
+				"aliases": [
+					"Migoto HLSL",
+					"3dm-hlsl"
+				],
+				"extensions": [
+					".hlsl"
+				]
+			}
+		],
+		"grammars": [
+			{
+				"language": "migoto-hlsl",
+				"scopeName": "source.migoto.hlsl",
+				"path": "./syntaxes/migoto-hlsl.tmLanguage.json"
+			},
+			{
+				"language": "migoto-ini",
+				"scopeName": "source.migoto",
+				"path": "./syntaxes/migoto-ini.tmLanguage.json"
+			},
+			{
+				"path": "./syntaxes/regexp.tmLanguage.json",
+				"scopeName": "source.regexp.pcre2"
+			},
+			{
+				"path": "./syntaxes/regexp-replace.tmLanguage.json",
+				"scopeName": "source.regexp-replace.pcre2"
+			}
+		],
+		"snippets": [
+			{
+				"language": "migoto-ini",
+				"path": "./snippets/migoto-ini.snippets.json"
+			}
+		]
+	}
+}
