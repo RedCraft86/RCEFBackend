@@ -2,12 +2,14 @@
 /*
 !.gitignore
 !.gitattributes
+!.gitmodules
 !README.md
 !LICENSE
 
-# Allow TextMateBundle and VolumeTools
+# Allow tools and the ResearchKit submodule
 !TextMateBundle/
 !VolumeTools/
+!ResearchKit/
 
 # Ignore cache data files
 VolumeTools/**/__pycache__/
