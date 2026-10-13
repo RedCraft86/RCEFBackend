@@ -1,0 +1,15 @@
+# Ignore everything except ourselves and a few files
+/*
+!.gitignore
+!.gitattributes
+!README.md
+!LICENSE
+
+# Allow TextMateBundle and VolumeTools
+!TextMateBundle/
+!VolumeTools/
+
+# Ignore cache data files
+VolumeTools/**/__pycache__/
+VolumeTools/Generated/
+VolumeTools/Exports/
