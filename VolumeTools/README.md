@@ -86,8 +86,10 @@ Coordinates convert from Unity `(X,Y,Z)` to Blender `(X,Z,Y)`. Importers weld ve
 
 ## Exports
 
-Each category under `Exports/` contains `<category>_MapXX_VB.buf`, `<category>_MapXX_IB.buf`, and `draw_counts.json`. Categories are `InvisWalls`, `KillZones`, and `TPZones`.
+Each category under `Exports/` contains `<category>_MapXX_VB.buf`, `<category>_MapXX_IB.buf`, `<category>_MapXX_Edges.buf`, and `draw_counts.json`. Categories are `InvisWalls`, `KillZones`, and `TPZones`.
 
 `draw_counts.json` maps `MapXX` to **index counts**. Use these as `drawindexed = <count>, 0, 0`. Export updates maps in the current scene and retains other entries. Shader integration is manual; no DrawFunc INIs are generated.
 
-Vertex buffers store little-endian XYZ plus barycentric UV (`<5f>`, 20-byte stride), with one vertex per triangle corner. Index buffers use sequential little-endian uint32 indices. Export triangulates the base mesh with its world transform; evaluated modifiers are not applied.
+Vertex buffers store little-endian XYZ plus barycentric UV (`<5f>`, 20-byte stride), with one vertex per triangle corner. Index buffers use sequential little-endian uint32 indices. Export snapshots the base mesh with its world transform, including live Edit Mode edits; source meshes, UVs, selection and mode are unchanged. Evaluated modifiers are not applied.
+
+Edge buffers contain one little-endian uint32 mask per triangle, in index-buffer order. Bit `i` enables the edge opposite corner `i`. Shared coplanar edges are hidden using the exporter's `COPLANAR_ANGLE_DEGREES` setting (default `0.1`); boundaries, creases and non-manifold edges remain visible. Face fill is retained. Re-export and install all three matching buffers for the updated DrawVolume shader; edge buffers bind as `R32_UINT` at `ps-t3`.

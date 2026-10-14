@@ -1,7 +1,8 @@
-"""Export every imported VolumeTools mesh into per-type map buffers and draw counts."""
+"""Export tagged VolumeTools meshes, masked outlines and draw counts without editing source meshes."""
 
 # User settings
 PROJECT_PATH = '..'  # VolumeTools folder containing config.json and Source/.
+COPLANAR_ANGLE_DEGREES = 0.1  # Hide shared flat edges, including triangulation diagonals.
 
 import json
 import math
@@ -9,6 +10,7 @@ import struct
 import sys
 from pathlib import Path
 import bpy
+import bmesh
 
 BARY_UVS = ((0.,0.),(1.,0.),(0.,1.))
 # Relative hints use the external script folder, or the saved blend folder for embedded text.
@@ -55,7 +57,68 @@ from Source.workflow import write_json
 CONFIG = read_config(ROOT)
 
 
+def edge_masks(points, triangles):
+    """Return one uint32 mask per triangle; bit i enables the edge opposite corner i."""
+    adjacency, normals = {}, []
+    for index, vertices in enumerate(triangles):
+        a, b, c = [points[i] for i in vertices]
+        normal = (b - a).cross(c - a)
+        normals.append(normal.normalized() if normal.length_squared > 0 and
+                       all(math.isfinite(v) for v in normal) else None)
+        for a, b in zip(vertices, vertices[1:] + vertices[:1]):
+            adjacency.setdefault(tuple(sorted((a, b))), []).append(index)
+    hidden = set()
+    cosine = math.cos(math.radians(COPLANAR_ANGLE_DEGREES))
+    for edge, faces in adjacency.items():
+        if len(faces) != 2:
+            continue
+        a, b = [normals[i] for i in faces]
+        if a is not None and b is not None and abs(a.dot(b)) >= cosine:
+            hidden.add(edge)
+    return [sum(1 << i for i in range(3)
+                if tuple(sorted((v[(i + 1) % 3], v[(i + 2) % 3]))) not in hidden)
+            for v in triangles]
+
+
+def prepare_buffers(obj):
+    """Snapshot base geometry, including live Edit Mode edits; return only owned bytes."""
+    editing = obj.mode == 'EDIT'
+    mesh = bpy.data.meshes.new('_VolumeToolsExport') if editing else obj.data.copy()
+    bm = None
+    try:
+        if editing:
+            bm = bmesh.from_edit_mesh(obj.data).copy()
+            bm.normal_update()
+            bm.to_mesh(mesh)
+        mesh.calc_loop_triangles()
+        # Keep the legacy loop-triangle order for both the expanded VB and the masks.
+        triangles = [tuple(triangle.vertices) for triangle in mesh.loop_triangles]
+        count = len(triangles) * 3
+        if count > 0xffffffff:
+            raise ValueError('Index count exceeds uint32 capacity')
+        points = [obj.matrix_world @ vertex.co for vertex in mesh.vertices]
+        vb = bytearray()
+        for triangle in triangles:
+            for vertex, uv in zip(triangle, BARY_UVS):
+                point = points[vertex]
+                if not all(math.isfinite(v) for v in point):
+                    raise ValueError('Nonfinite exported vertex in ' + obj.name)
+                try:
+                    vb.extend(struct.pack('<5f', *point, *uv))
+                except (OverflowError, struct.error) as exc:
+                    raise ValueError('Vertex exceeds float32 capacity in ' + obj.name) from exc
+        ib = b''.join(struct.pack('<I', index) for index in range(count))
+        edges = b''.join(struct.pack('<I', mask) for mask in edge_masks(points, triangles))
+        return bytes(vb), ib, count, edges
+    finally:
+        if bm is not None:
+            bm.free()
+        bpy.data.meshes.remove(mesh)
+
+
 def export():
+    if not math.isfinite(COPLANAR_ANGLE_DEGREES) or not 0 <= COPLANAR_ANGLE_DEGREES < 90:
+        raise ValueError('COPLANAR_ANGLE_DEGREES must be finite and in [0, 90)')
     output = configured_path(ROOT, CONFIG, 'blender_export_dir')
     backup_root = configured_path(ROOT, CONFIG, 'output')
     jobs, seen, manifests = [], {}, {}
@@ -69,26 +132,12 @@ def export():
         if key in seen:
             raise ValueError('Duplicate ' + category + '/' + map_name + ': ' + seen[key] + ', ' + obj.name + '; remove or untag the old import')
         seen[key] = obj.name
-        if obj.mode == 'EDIT':
-            obj.update_from_editmode()
-        mesh = obj.data
-        mesh.calc_loop_triangles()
-        count = len(mesh.loop_triangles) * 3
-        if count > 0xffffffff:
-            raise ValueError('Index count exceeds uint32 capacity')
         # Validate every job before replacing any output, including transformed float32 values.
-        vb = bytearray()
-        for triangle in mesh.loop_triangles:
-            for loop_index, uv in zip(triangle.loops, BARY_UVS):
-                point = obj.matrix_world @ mesh.vertices[mesh.loops[loop_index].vertex_index].co
-                if not all(math.isfinite(v) for v in point):
-                    raise ValueError('Nonfinite exported vertex in ' + obj.name)
-                vb.extend(struct.pack('<5f', *point, *uv))
-        ib = b''.join(struct.pack('<I', index) for index in range(count))
-        jobs.append((category, map_name, bytes(vb), ib, count))
+        vb, ib, count, edges = prepare_buffers(obj)
+        jobs.append((category, map_name, vb, ib, count, edges))
     if not jobs:
         raise RuntimeError('No imported VolumeTools meshes in the current scene')
-    for category, _, _, _, _ in jobs:
+    for category, _, _, _, _, _ in jobs:
         if category in manifests:
             continue
         path = output / category / 'draw_counts.json'
@@ -96,11 +145,11 @@ def export():
         if not isinstance(value, dict) or any(not isinstance(k, str) or type(v) is not int or v < 0 for k, v in value.items()):
             raise ValueError('Invalid draw-count manifest: ' + str(path))
         manifests[category] = value
-    for category, map_name, vb, ib, count in jobs:
+    for category, map_name, vb, ib, count, edges in jobs:
         directory = output / category
         directory.mkdir(parents=True, exist_ok=True)
         name = category + '_' + map_name
-        for suffix, data in (('_VB.buf', vb), ('_IB.buf', ib)):
+        for suffix, data in (('_VB.buf', vb), ('_IB.buf', ib), ('_Edges.buf', edges)):
             path = directory / (name + suffix)
             temporary = path.with_suffix('.buf.tmp')
             try:
