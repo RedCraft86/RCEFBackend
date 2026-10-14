@@ -103,17 +103,25 @@ def process(config, *, decode_only=False, overrides=None):
     if 'walls' in selected:
         wall_config = {**config, **config['walls'], 'research_kit': str(resolve_path(config['research_kit']))}
         for region in regions or discover(inputs['walls'], 'walls'):
-            walls.extract(inputs['walls'], output / 'InvisWalls', region, wall_config)
-            data = json.loads((output / 'InvisWalls' / (region + '-walls.json')).read_text())
-            summaries.append({'region': region, 'type': 'walls', 'count': len(data['boxes'])})
-    status = 0
+            data = walls.extract(inputs['walls'], output / 'InvisWalls', region, wall_config)
+            summaries.append({'region': region, 'type': 'walls', 'count': len(data['boxes']),
+                              'status': data['status']})
+    status = 2 if any(row.get('status') != 'decoded' for row in summaries) else 0
     if needs_zones:
         zone_regions = regions or discover(inputs['zones'], 'zones')
         kinds = ['teleport' if t == 'tp' else t for t in selected if t != 'walls']
-        status = zones.build(inputs['zones'], output / 'Zones', zone_regions, kinds, config, evidence)
+        status = max(status, zones.build(inputs['zones'], output / 'Zones', zone_regions, kinds, config, evidence))
         for row in json.loads((output / 'Zones/extraction-report.json').read_text())['datasets']:
             summaries.append({**row, 'type': 'tp' if row['kind'] == 'teleport' else row['kind']})
     write_json(output / 'processing-report.json', {'datasets': summaries, 'status': 'decoded' if not status else 'partial'}, output)
+    archive_path=output/'Recovery/archive-inventory.json'
+    if archive_path.is_file():
+        from Source.archive import compare, read_datasets
+        archive=json.loads(archive_path.read_text(encoding='utf-8-sig'))
+        current=read_datasets(output,archive)
+        selected_regions={row['region'] for row in summaries}
+        current={key:value for key,value in current.items() if key[0] in selected_regions and key[1] in selected}
+        write_json(output/'Recovery/archive-comparison.json',compare(archive,current),output)
     return status
 
 
@@ -127,12 +135,17 @@ def main():
     parser.add_argument('--types', nargs='+', choices=TYPES)
     parser.add_argument('--walls-input', type=Path)
     parser.add_argument('--zones-input', type=Path)
+    parser.add_argument('--jobs', type=int, help='File-decoding processes; defaults to min(4, CPU count)')
     args = parser.parse_args()
     if (args.walls_input or args.zones_input) and not args.decode_only:
         parser.error('Input overrides require --decode-only')
-    if args.prepare_native and any((args.regions, args.types, args.walls_input, args.zones_input)):
+    if args.jobs is not None and args.jobs < 1:
+        parser.error('--jobs must be positive')
+    if args.prepare_native and any((args.regions, args.types, args.walls_input, args.zones_input, args.jobs)):
         parser.error('--prepare-native accepts --config only')
     config = load_config(args.config)
+    if args.jobs is not None:
+        config['jobs'] = args.jobs
     if args.regions is not None:
         if any(not re.fullmatch(r'map\d+', r) for r in args.regions):
             parser.error('Regions must be mapNN identifiers')

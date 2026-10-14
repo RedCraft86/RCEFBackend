@@ -51,6 +51,12 @@ python -B process_game_data.py --decode-only
 
 This reuses `Generated/latest-extraction.json`. Use `--walls-input` or `--zones-input` with `--decode-only` to override saved inputs. Zone inputs require a matching `zone-inputs.json` manifest, native copies, and evidence.
 
+File decoding runs in separate processes, defaulting to `min(4, CPU count)`. Override with `--jobs` or the `jobs` configuration setting; use `--jobs 1` for sequential decoding. Results and provenance are merged deterministically by the parent process.
+
+```powershell
+python -B process_game_data.py --decode-only --jobs 4
+```
+
 After a game update, refresh native evidence, then extract fresh inputs:
 
 ```powershell
@@ -58,9 +64,23 @@ python -B process_game_data.py --prepare-native
 python -B process_game_data.py
 ```
 
-Build mismatches and unsupported layouts still fail.
+Native evidence version 3 supports the current 15-member function-area layout, generated union routes, and the native four-byte string-reference formatter. String references are retained as `{"stringReference": id}`; their text is unresolved. Refresh older evidence with `--prepare-native`. Saved inputs with matching native hashes can then be reused with `--decode-only`; 13-member inputs and build mismatches remain unsupported.
 
 Datasets go to `Generated/InvisWalls` and `Generated/Zones`; native evidence lives in `Generated/Native`. Check `Generated/processing-report.json` for results. Replaced datasets are backed up, and failures return nonzero. Zones retain authored conditions; extracted geometry does not establish runtime activation or whole-game coverage. Processing and Blender export are separate steps.
+
+Incomplete scans write `*-scan-report.json` and retain previous datasets. A wall scan recognizing no supported shapes or selecting no validated walls returns nonzero. Current compound shapes use 56-byte records; their extra word is preserved without assigning semantics. Selection signatures remain empirical.
+
+### Archive comparison
+
+`Blender/SceneObjects.blend` is a historical geometry reference. Create a read-only inventory using Blender's background mode (adjust the executable path for your installation):
+
+```powershell
+& 'C:/Program Files/Blender Foundation/Blender 5.0/blender.exe' --background --factory-startup --disable-autoexec Blender/SceneObjects.blend --python Blender/archive_inventory.py -- Generated/Recovery/archive-inventory.json
+```
+
+The inventory uses face provenance and converts world-space vertices back to Unity coordinates; it never saves the blend. With this inventory present, processing writes `Generated/Recovery/archive-comparison.json`. Matched vertices use a 0.001-world-unit tolerance; missing matches are not proof of removal, and triangle-count differences are recorded separately.
+
+Run `python -B compare_archive.py` to compare existing outputs separately.
 
 ## Blender
 

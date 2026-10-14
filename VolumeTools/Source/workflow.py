@@ -20,6 +20,10 @@ def resolve_path(value):
 def load_config(path=None):
     source = Path(path) if path is not None else ROOT / 'config.json'
     config = json.loads(source.read_text(encoding='utf-8-sig'))
+    from Source.parallel import default_jobs
+    config.setdefault('jobs', default_jobs())
+    if type(config['jobs']) is not int or config['jobs'] < 1:
+        raise ValueError('jobs must be a positive integer')
     for name in ('game_data', 'research_kit', 'output', 'native_inputs', 'native_evidence', 'blender_export_dir'):
         if not isinstance(config.get(name), str) or not config[name]:
             raise ValueError('Missing configured path: ' + name)
