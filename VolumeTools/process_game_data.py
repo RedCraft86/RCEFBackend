@@ -114,14 +114,9 @@ def process(config, *, decode_only=False, overrides=None):
         for row in json.loads((output / 'Zones/extraction-report.json').read_text())['datasets']:
             summaries.append({**row, 'type': 'tp' if row['kind'] == 'teleport' else row['kind']})
     write_json(output / 'processing-report.json', {'datasets': summaries, 'status': 'decoded' if not status else 'partial'}, output)
-    archive_path=output/'Recovery/archive-inventory.json'
-    if archive_path.is_file():
-        from Source.archive import compare, read_datasets
-        archive=json.loads(archive_path.read_text(encoding='utf-8-sig'))
-        current=read_datasets(output,archive)
-        selected_regions={row['region'] for row in summaries}
-        current={key:value for key,value in current.items() if key[0] in selected_regions and key[1] in selected}
-        write_json(output/'Recovery/archive-comparison.json',compare(archive,current),output)
+    if not status:
+        from Source.blender.build import build
+        build(config, summaries)
     return status
 
 

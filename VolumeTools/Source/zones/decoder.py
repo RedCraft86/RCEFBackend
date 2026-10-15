@@ -31,7 +31,6 @@ class ZoneCodec:
                     for entry in evidence['families'][family]}
 
     def string_reference(self,data,offset):
-        # Fix: BeyondStringFormatter reads an int32 reference, not inline UTF-8 bytes.
         result=self.memorypack.read_i32(data,offset)
         if result is None: raise ValueError('Truncated string reference at '+str(offset))
         value,end=result
@@ -63,14 +62,12 @@ class ZoneCodec:
             value=None
             if data[offset]: value,_=self.read(data,offset+width,child,depth=depth+1)
             return value,offset+size
-        # Fix: enum collection elements have no member descriptor of their own.
         if type_name in self.enum_widths or (member and member.get('kind')=='enum'):
             width=self.enum_widths.get(type_name)
             if member and member.get('kind')=='enum' and width!=member.get('width'):
                 raise ValueError('Native enum width disagrees with member: '+type_name)
             if width not in (1,2,4,8) or offset+width>len(data): raise ValueError('Enum bounds/width')
             return int.from_bytes(data[offset:offset+width],'little',signed=False),offset+width
-        # Improve: typed integer grid coordinates close dynamic-occlusion prefixes.
         if type_name in ('UnityEngine.Vector2Int','UnityEngine.Vector3Int'):
             n=2 if type_name.endswith('Vector2Int') else 3
             if offset+4*n>len(data): raise ValueError('Integer vector bounds')
@@ -90,7 +87,6 @@ class ZoneCodec:
                 value,cursor=self.read(data,cursor,child,depth=depth+1); rows.append(value)
             return rows,cursor
         if type_name.startswith('System.Collections.Generic.Dictionary`2<'):
-            # Improve: retain key/value pairs without turning reference keys into guessed strings.
             arguments=type_name.split('<',1)[1][:-1]
             nesting=0; split=None
             for index,character in enumerate(arguments):
@@ -109,13 +105,11 @@ class ZoneCodec:
             return pairs,cursor
         if offset>=len(data): raise ValueError('Truncated object')
         schema=self.schemas.get(type_name)
-        # Fix: fixed serialized fields alone do not prove an unmanaged runtime struct (EntityPtr is framed).
         raw_size=self.unmanaged_sizes.get(type_name) if schema is None or schema.get('framesAsRawStruct') else None
         if raw_size is not None:
             if offset+raw_size>len(data): raise ValueError('Truncated native raw struct '+type_name)
             return {'storedType':type_name,'startOffset':offset,'endOffset':offset+raw_size,
                     'rawHex':data[offset:offset+raw_size].hex()},offset+raw_size
-        # Fix: raw unmanaged structs have no null marker, even when their first byte is 0xff.
         if data[offset]==255: return None,offset+1
         if type_name in self.unions:
             tag=data[offset]; concrete=self.unions[type_name].get(tag)
@@ -135,7 +129,6 @@ class ZoneCodec:
                 raise ValueError(f'{type_name}.{field["name"]} at {cursor}: {exc}') from exc
         row['endOffset']=cursor
         if type_name=='Beyond.Gameplay.ThreeDimRange':
-            # Fix: keep the geometry API's names while retaining native m_center/m_size members.
             row['center']=row['m_center']; row['size']=row['m_size']
         return row,cursor
 
@@ -144,7 +137,6 @@ class ZoneCodec:
         return {'startOffset':offset,'endOffset':end,'count':-1 if rows is None else len(rows),'rows':rows or []}
 
     def base_collection(self,data,offset):
-        # Fix: retain the framing reader's row contract while decoding the current native layout.
         result=self.collection(data,offset,BASE_TYPE)
         cursor=offset+4
         for index,row in enumerate(result['rows']):
@@ -175,10 +167,7 @@ class ZoneCodec:
         def bases(b,o):
             try: return self.base_collection(b,o)
             except ValueError as exc: raise self.leveldata.LevelFunctionAreaCodecError(str(exc)) from exc
-        # Improve: bind structural framing to independently derived current-build codecs.
-        # No ResearchKit module or existing contract gate is modified.
         scope=dict(self.leveldata.frame_leveldata_named_prefix.__globals__)
-        # Improve: close current dynamic-occlusion rows before the function-area field.
         def dynamic(b,o):
             try: return self.collection(b,o,'Beyond.Gameplay.LevelDynamicOccludeAreaData')
             except ValueError: return None

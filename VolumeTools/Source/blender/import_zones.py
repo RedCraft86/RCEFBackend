@@ -1,7 +1,7 @@
 """Import one zone mesh per selected map and death/TP kind."""
 
 # User settings
-PROJECT_PATH = '..'  # VolumeTools folder containing config.json and Source/.
+PROJECT_PATH = '../..'  # VolumeTools folder containing config.json and Source/.
 MAPS = ['map01', 'map02']  # Explicit maps to import; no automatic discovery.
 KINDS = ['death', 'tp']  # Zone kinds to import.
 MERGE_DISTANCE = 0.0001  # Vertex welding grid, matching the wall importer.
@@ -42,18 +42,18 @@ else:
     else:
         raise FileNotFoundError('Embedded script in an unsaved blend: save the blend or set PROJECT_PATH to an absolute VolumeTools path')
     ROOT = (anchor / hint).resolve()
-required = ('config.json', 'process_game_data.py', 'Source/__init__.py', 'Source/workflow.py', 'Source/blender_support.py')
+required = ('config.json', 'process_game_data.py', 'Source/__init__.py', 'Source/workflow.py', 'Source/blender/__init__.py', 'Source/blender/support.py')
 missing = [name for name in required if not (ROOT / name).is_file()]
 if missing:
     raise FileNotFoundError('PROJECT_PATH resolved to ' + str(ROOT) + '; missing: ' + ', '.join(missing))
 # Load the selected support file directly, before using any cached Source imports.
 import importlib.util
-spec = importlib.util.spec_from_file_location('_volume_tools_blender_support', ROOT / 'Source/blender_support.py')
+spec = importlib.util.spec_from_file_location('_volume_tools_blender_support', ROOT / 'Source/blender/support.py')
 support = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(support)
 support.activate_project(ROOT)
 ROOT = support.workflow_root(ROOT)
-from Source.blender_support import read_config, configured_path, identity, attach, activate
+from Source.blender.support import read_config, configured_path, identity, attach, activate
 CONFIG = read_config(ROOT)
 
 
@@ -68,8 +68,8 @@ def load_dataset(region, kind):
         raise ValueError('Dataset identity disagrees with map/type selection')
     if data.get('status') != 'decoded' or data.get('errors') or data.get('unresolvedPrefixes'):
         raise ValueError('Zone dataset is incomplete; run a successful fresh game-data dump before importing')
-    if not isinstance(data.get("zones"), list) or "boundary" not in data:
-        raise ValueError("Zone dataset is missing zones or boundary: " + str(dataset))
+    if not isinstance(data.get('zones'), list):
+        raise ValueError('Zone dataset is missing zones: ' + str(dataset))
     return region, kind, dataset, data
 
 
@@ -100,6 +100,9 @@ def import_dataset(region, kind, dataset, data):
             face_keys.add(key)
             triangles.append(mapped)
             provenance.append(index)
+    if not triangles:
+        print('Skipped empty zones:', region, kind)
+        return None
     mesh = bpy.data.meshes.new('Zones')
     mesh.from_pydata(vertices, [], triangles)
     if mesh.validate():
@@ -112,7 +115,7 @@ def import_dataset(region, kind, dataset, data):
     attribute = mesh.attributes.new(name='offline_zone_index', type='INT', domain='FACE')
     attribute.data.foreach_set('value', provenance)
     mesh.update()
-    obj = attach(mesh, kind, region, dataset, data['boundary'])
+    obj = attach(mesh, kind, region, dataset)
     obj['volume_count'] = len(data['zones'])
     obj['merged_vertex_count'] = merged_vertices
     obj['skipped_duplicate_triangles'] = duplicate_faces
@@ -135,7 +138,8 @@ def main():
     maps = list(dict.fromkeys(MAPS))
     kinds = list(dict.fromkeys(KINDS))
     prepared = [load_dataset(region, kind) for region in maps for kind in kinds]
-    return [import_dataset(*entry) for entry in prepared]
+    return [obj for entry in prepared if (obj := import_dataset(*entry)) is not None]
 
 
-IMPORTED_OBJECTS = main()
+if __name__ == '__main__':
+    IMPORTED_OBJECTS = main()

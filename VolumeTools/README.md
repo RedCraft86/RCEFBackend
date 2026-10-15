@@ -1,6 +1,6 @@
 # VolumeTools
 
-Extract invisible walls, death zones, and teleport zones from offline anime game files, then import and export their meshes through Blender. Requires ResearchKit and installed game data. Eviction zones, dynamic walls, and unsupported layouts are excluded.
+Extract invisible walls, death zones, and teleport zones from offline anime game files, automatically build a Blender scene, and export its buffers. Requires ResearchKit, installed game data, and Blender. Eviction zones, dynamic walls, and unsupported layouts are excluded.
 
 ## Setup
 
@@ -21,11 +21,30 @@ Edit `config.json` to set the installed `game_data` path. Defaults are:
 | --- | --- |
 | `research_kit` | `../ResearchKit` |
 | `output` | `Generated` |
-| `blender_export_dir` | `Exports` |
+| `exports_dir` | `Exports` |
 | `regions` | `map01`, `map02` |
 | `types` | `walls`, `death`, `tp` |
 
 Configuration paths resolve relative to VolumeTools, including custom configs. CLI paths resolve from the terminal's working directory. Set `regions: []` to discover all mapNN maps. The nested `walls` settings apply only to walls.
+
+Blender is discovered through PATH or installed Windows versions under `Program Files/Blender Foundation`. Set optional `blender_executable` to an executable path or command to override discovery.
+
+## File layout
+
+```text
+VolumeTools/
+  process_game_data.py    # Extraction, decoding, and automatic Blender export
+  config.json
+  README.md
+  Source/
+    blender/             # Launcher, scene builder, import/export scripts, shared helpers
+    walls/               # Invisible-wall decoding
+    zones/               # Zone decoding, geometry, and native evidence
+    workflow.py          # Configuration, paths, and dataset publication
+    parallel.py          # File-decoding workers
+  Generated/             # Created during processing: inputs, datasets, evidence, reports
+  Exports/               # Created during export: dated blend/buffer bundles
+```
 
 ## Processing
 
@@ -51,7 +70,8 @@ python -B process_game_data.py --decode-only
 
 This reuses `Generated/latest-extraction.json`. Use `--walls-input` or `--zones-input` with `--decode-only` to override saved inputs. Zone inputs require a matching `zone-inputs.json` manifest, native copies, and evidence.
 
-File decoding runs in separate processes, defaulting to `min(4, CPU count)`. Override with `--jobs` or the `jobs` configuration setting; use `--jobs 1` for sequential decoding. Results and provenance are merged deterministically by the parent process.
+File decoding runs in separate processes. Override with `--jobs` or the `jobs` configuration setting; use `--jobs 1` for sequential decoding. Results and provenance are merged deterministically by the parent process.
+By default `config.json` has the job count set to 10. If this entry doesn't exist or `--jobs` is not provided, uses `min(4, CPU count)`.
 
 ```powershell
 python -B process_game_data.py --decode-only --jobs 4
@@ -66,49 +86,56 @@ python -B process_game_data.py
 
 Native evidence version 3 supports the current 15-member function-area layout, generated union routes, and the native four-byte string-reference formatter. String references are retained as `{"stringReference": id}`; their text is unresolved. Refresh older evidence with `--prepare-native`. Saved inputs with matching native hashes can then be reused with `--decode-only`; 13-member inputs and build mismatches remain unsupported.
 
-Datasets go to `Generated/InvisWalls` and `Generated/Zones`; native evidence lives in `Generated/Native`. Check `Generated/processing-report.json` for results. Replaced datasets are backed up, and failures return nonzero. Zones retain authored conditions; extracted geometry does not establish runtime activation or whole-game coverage. Processing and Blender export are separate steps.
+Datasets go to `Generated/InvisWalls` and `Generated/Zones`; native evidence lives in `Generated/Native`. Check `Generated/processing-report.json` for decoding results. Replaced datasets are backed up, and failures return nonzero. Zones retain authored conditions; extracted geometry does not establish runtime activation or whole-game coverage.
+
+Successful processing (including `--decode-only`) launches Blender in background mode, builds the scene, and exports a new dated history entry. The effective configuration and CLI selection are passed to Blender. Each entry contains exactly this run's selected maps/types, without copying geometry from earlier exports. `--prepare-native` does not launch Blender. Incomplete decoding or Blender failures publish no entry and leave previous exports intact.
 
 Incomplete scans write `*-scan-report.json` and retain previous datasets. A wall scan recognizing no supported shapes or selecting no validated walls returns nonzero. Current compound shapes use 56-byte records; their extra word is preserved without assigning semantics. Selection signatures remain empirical.
 
-### Archive comparison
+## Manual Blender editing
 
-`Blender/SceneObjects.blend` is a historical geometry reference. Create a read-only inventory using Blender's background mode (adjust the executable path for your installation):
-
-```powershell
-& 'C:/Program Files/Blender Foundation/Blender 5.0/blender.exe' --background --factory-startup --disable-autoexec Blender/SceneObjects.blend --python Blender/archive_inventory.py -- Generated/Recovery/archive-inventory.json
-```
-
-The inventory uses face provenance and converts world-space vertices back to Unity coordinates; it never saves the blend. With this inventory present, processing writes `Generated/Recovery/archive-comparison.json`. Matched vertices use a 0.001-world-unit tolerance; missing matches are not proof of removal, and triangle-count differences are recorded separately.
-
-Run `python -B compare_archive.py` to compare existing outputs separately.
-
-## Blender
+Normal processing needs no manual Blender steps. Open a generated `Volumes.blend` to edit it, then run `Source/blender/export_buffers.py` from disk to save an edited copy and matching buffers as another dated entry. The generated blend retains its effective configuration, including a custom export root. Saving the copy does not change the currently open blend's path.
 
 Open the scripts from disk or embed them in Blender's Text Editor. Edit each script's **User settings**, setting `PROJECT_PATH` to the VolumeTools folder containing `config.json` and `Source/`:
 
 ```python
-PROJECT_PATH = '..'
+PROJECT_PATH = '../..'
 # Use an absolute path when needed:
-# PROJECT_PATH = 'C:/Users/RedCraft86/Desktop/Endfield/RCEFBackend/VolumeTools'
+# PROJECT_PATH = 'C:/Users/YourName/Desktop/Endfield/RCEFBackend/VolumeTools'
 ```
 
-Relative paths use the external script's directory, or the saved blend's directory for embedded scripts. `..` works from `Blender/` or a blend directly in `Generated/`; a blend in `Generated/Scenes/` needs `../..`. Unsaved embedded scripts require an absolute path. Reopen external scripts after edits or moves.
+Relative paths use the external script's directory, or the saved blend's directory for embedded scripts. The default `../..` works from `Source/blender/` and blends in `Exports/<date>/`; a blend directly in `Generated/` needs `..`. Unsaved embedded scripts require an absolute path. Reopen external scripts after edits or moves.
 
-1. Run `Blender/import_walls.py`.
-2. Run `Blender/import_zones.py`.
-3. Save the blend, then run `Blender/export_buffers.py`.
+1. Run `Source/blender/import_walls.py`.
+2. Run `Source/blender/import_zones.py`.
+3. Save the blend, then run `Source/blender/export_buffers.py`.
 
 Both importers default to `MAPS = ['map01', 'map02']`; zones default to `KINDS = ['death', 'tp']`. These lists must be nonempty and select existing datasets. Only mapNN regions are supported, with no automatic discovery. Incomplete zone datasets are refused.
 
-Each map/type becomes a separate mesh in `InvisWalls`, `KillZones`, or `TPZones`. Export uses mesh custom properties, so renaming is safe. Remove duplicate imports before exporting. To exclude a mesh, remove it from the scene or remove both `volume_tools_type` and `volume_tools_map`; hiding it is insufficient. Empty datasets export empty buffers and zero counts, replacing prior geometry.
+Each nonempty map/type becomes a separate mesh in `InvisWalls`, `KillZones`, or `TPZones`. Validated datasets with no resulting triangles create no mesh. Missing or incomplete datasets are refused. Export uses mesh custom properties, so renaming is safe. Remove duplicate imports before exporting. To exclude a mesh, remove it from the scene or remove both `volume_tools_type` and `volume_tools_map`; hiding it is insufficient. Tagged meshes with no triangles produce no buffers or draw-count entry.
 
 Coordinates convert from Unity `(X,Y,Z)` to Blender `(X,Z,Y)`. Importers weld vertices using `MERGE_DISTANCE`, default `0.0001`, and add barycentric `UVMap` data. Saved meshes can be re-exported without the source datasets, but still require VolumeTools support files and config.
 
 ## Exports
 
-Each category under `Exports/` contains `<category>_MapXX_VB.buf`, `<category>_MapXX_IB.buf`, `<category>_MapXX_Edges.buf`, and `draw_counts.json`. Categories are `InvisWalls`, `KillZones`, and `TPZones`.
+Each successful automatic build or manual export creates a new UTC-dated folder under `exports_dir` (default `Exports`). Earlier entries and existing legacy exports are retained:
 
-`draw_counts.json` maps `MapXX` to **index counts**. Use these as `drawindexed = <count>, 0, 0`. Export updates maps in the current scene and retains other entries. Shader integration is manual; no DrawFunc INIs are generated.
+```text
+Exports/
+  YYYYMMDD-HHMMSS-microseconds/
+    Volumes.blend
+    DrawFunc.json
+    Buffers/
+      InvisWalls_Map01_VB.buf
+      InvisWalls_Map01_IB.buf
+      InvisWalls_Map01_Edges.buf
+      KillZones_Map02_VB.buf
+      ...
+```
+
+Buffer basenames remain `<category>_MapXX_{VB,IB,Edges}.buf`; categories are `InvisWalls`, `KillZones`, and `TPZones`. All buffers share the same `Buffers/` folder. The blend and buffers are staged together before the dated folder is published.
+
+`DrawFunc.json` maps full buffer stems to **index counts**, for example `{"InvisWalls_Map01": 1200, "KillZones_Map02": 360}`. Use these as `drawindexed = <count>, 0, 0`. Manual export includes all nonempty tagged meshes in the scene. An entirely empty selection produces an empty blend, `{}` counts, and an empty `Buffers/` folder. Shader integration is manual; no DrawFunc INIs are generated.
 
 Vertex buffers store little-endian XYZ plus barycentric UV (`<5f>`, 20-byte stride), with one vertex per triangle corner. Index buffers use sequential little-endian uint32 indices. Export snapshots the base mesh with its world transform, including live Edit Mode edits; source meshes, UVs, selection and mode are unchanged. Evaluated modifiers are not applied.
 

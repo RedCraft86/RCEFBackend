@@ -3,13 +3,10 @@
 Selection uses a raw-word signature shared by five verified wall boxes.
 It is empirical, not a native-authenticated collision-layer definition.
 """
-import argparse
 import hashlib
-import json
 import math
 import re
 import struct
-import sys
 from pathlib import Path
 
 
@@ -83,7 +80,7 @@ def initialize_worker(config, scene):
 
 
 def scan_file(path):
-    """Return bounded geometry and provenance; never write datasets from a worker."""
+    """Return geometry, signatures, and source paths for selection and deduplication."""
     from scripts.game_data.streaming.framing import _table_layout
     path = Path(path).resolve()
     result = {'source': str(path.relative_to(_SCENE)), 'boxes': [], 'occurrences': 0,
@@ -96,7 +93,6 @@ def scan_file(path):
         if not 0 < expected < _CONFIG['maximum_decoded_bytes']:
             raise ValueError('invalid decoded size')
         data = decode(raw[4:], expected)
-        digest = hashlib.sha256(raw).hexdigest()
         all_records = {}
         total_boxes = 0
         for match in _PATTERN.finditer(data):
@@ -110,21 +106,17 @@ def scan_file(path):
             kind,group,usage=struct.unpack_from('<3I',data,start+28)
             if length in (64,68) and kind==1:
                 parts=[(actor,actor_q,struct.unpack_from('<3f',data,start+40),struct.unpack_from('<3I',data,start+52),0)]
-                layout_name='compact-'+str(length)
-                extra_words=[struct.unpack_from('<I',data,start+64)[0]] if length==68 else []
             elif kind==5:
                 part_count=struct.unpack_from('<I',data,start+44)[0]
                 strides=[stride for stride in (52,56) if part_count and length==64+stride*part_count]
                 if len(strides)!=1 or part_count>_CONFIG['maximum_compound_boxes']: continue
-                stride=strides[0];layout_name='compound-'+str(stride);extra_words=[]
+                stride=strides[0]
                 parts=[]
-                # Fix: current compound records add an opaque word after each 52-byte shape body.
                 for j in range(part_count):
                     sub=start+64+stride*j
                     local=struct.unpack_from('<3f',data,sub); local_q=struct.unpack_from('<4f',data,sub+12)
                     shifted=rotate(local,actor_q)
                     parts.append((tuple(actor[i]+shifted[i] for i in range(3)),multiply(actor_q,local_q),struct.unpack_from('<3f',data,sub+40),struct.unpack_from('<3I',data,sub+28),j))
-                    extra_words.append(struct.unpack_from('<I',data,sub+52)[0] if stride==56 else None)
             else: continue
             for center,quat,half,flags,part_index in parts:
                 if not all(math.isfinite(v) for v in (*center,*quat,*half)) or abs(sum(v*v for v in quat)-1)>.001 or not all(0<v<10000 for v in half): continue
@@ -137,11 +129,9 @@ def scan_file(path):
                             v=rotate((sx*half[0],sy*half[1],sz*half[2]),quat)
                             vertices.append([v[i]+center[i] for i in range(3)])
                 identity=hashlib.sha256(data[start:start+length]).hexdigest()+':'+str(part_index)
-                origin={'source':str(path.relative_to(_SCENE)),'decodedOffset':start,'subShapeIndex':part_index,'payloadLength':length,'sourceSha256':digest}
+                origin={'source':result['source']}
                 if identity in all_records: all_records[identity]['origins'].append(origin); continue
-                words=[kind,group,usage,*flags]
-                row={'center':center,'quaternionXYZW':quat,'halfExtents':half,'vertices':vertices,'anonymousWords28to100':words,'selectionSignature':[group,usage,*flags],'origins':[origin],
-                     'payloadLayout':layout_name,'shapeTrailingWord':extra_words[part_index] if extra_words else None}
+                row={'center':center,'vertices':vertices,'selectionSignature':[group,usage,*flags],'origins':[origin]}
                 row['_identity']=identity
                 all_records[identity]=row
         result.update(boxes=list(all_records.values()), occurrences=total_boxes, decoded=True)
@@ -172,38 +162,27 @@ def extract(scene, output, region, config):
                 all_records[key] = row
         if count % 500 == 0:
             print(f'Scanned {count}/{len(paths)} files with {jobs} workers; {len(all_records)} bounded candidates', flush=True)
-    report = {'region': region, 'filesScanned': count, 'decodedFiles': decoded,
-              'boundedBoxOccurrences': occurrences, 'errors': errors,
-              'codecCheckedAgainstKit': False, 'boxes': list(all_records.values()),
-              'selection': 'All bounded compact/compound box candidates',
-              'boundary': 'Empirical static box selection; no runtime activation or complete coverage claim.'}
-    # Fix: no recognized shapes is an unsupported format, not proof of no walls.
-    report['status'] = 'decoded' if decoded and occurrences and not errors else 'partial'
+    status = 'decoded' if decoded and occurrences and not errors else 'partial'
     if decoded and not occurrences:
-        report['errors'].append({'error': 'No supported box payloads recognized; wall layout recovery required'})
-    report['wallCandidateCount'] = len(all_records)
-    write_json(output/(region+'-all-box-candidates.json'), report, output)
+        errors.append({'error': 'No supported box payloads recognized; wall layout recovery required'})
     exclusions = config.get('excluded_source_suffixes', {}).get(region, [])
-    kept, excluded = [], []
+    kept = []
     for row in all_records.values():
         if list(row['selectionSignature']) not in config['accepted_signatures']:
             continue
-        origins = [o for o in row['origins'] if not any(o['source'].endswith('_'+suffix+'.bytes') for suffix in exclusions)]
-        if not origins:
-            excluded.append(row)
+        if not any(not any(o['source'].endswith('_'+suffix+'.bytes') for suffix in exclusions)
+                   for o in row['origins']):
             continue
-        kept.append({**row, 'origins': origins})
-    report = {**report, 'boxes': kept, 'wallCandidateCount': len(kept),
-              'excludedBoxCount': len(excluded), 'configuration': config,
-              'selection': 'Configured empirical signatures and source exclusions'}
-    # Fix: a lost selection signature must not replace an earlier usable mesh with zero walls.
+        kept.append({'center':row['center'],'vertices':row['vertices']})
     if not kept:
-        report['status'] = 'partial'
-        report['errors'].append({'error': 'No validated wall selection; previous wall dataset retained'})
-    if report['status'] == 'decoded':
+        status = 'partial'
+        errors.append({'error': 'No validated wall selection; previous wall dataset retained'})
+    report = {'region':region,'status':status,'boxes':kept}
+    if status == 'decoded':
         write_json(output/(region+'-walls.json'), report, output)
-        write_json(output/(region+'-excluded.json'), {'boxes': excluded}, output)
     else:
-        write_json(output/(region+'-scan-report.json'), report, output)
-    print(region, report['status'], len(kept), 'walls;', len(errors), 'diagnostics', flush=True)
+        write_json(output/(region+'-scan-report.json'), {
+            'region':region,'status':status,'filesScanned':count,'decodedFiles':decoded,
+            'candidateCount':len(all_records),'errors':errors},output)
+    print(region, status, len(kept), 'walls;', len(errors), 'diagnostics', flush=True)
     return report

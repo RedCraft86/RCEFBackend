@@ -56,7 +56,6 @@ def reconstruct(base,range_row):
   points=[tuple(p) for p in base['posList'] or []]
   if len(points)>1 and points[0]==points[-1]: points.pop()
   if len(points)<3 or len(set(points))!=len(points): raise ValueError('Invalid polygon points')
-  # Improve: BeyondPolyLineShape stores one yaw angle; pitch/roll do not tilt its vertical extrusion.
   q=euler_quaternion((0,base['euler'][1],0))
   if range_row is None: raise ValueError('Polygon needs authored vertical range')
   low=range_row['center'][1]-range_row['size'][1]/2; high=range_row['center'][1]+range_row['size'][1]/2

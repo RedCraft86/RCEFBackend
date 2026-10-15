@@ -1,13 +1,14 @@
 """Export tagged VolumeTools meshes, masked outlines and draw counts without editing source meshes."""
 
 # User settings
-PROJECT_PATH = '..'  # VolumeTools folder containing config.json and Source/.
+PROJECT_PATH = '../..'  # VolumeTools folder containing config.json and Source/.
 COPLANAR_ANGLE_DEGREES = 0.1  # Hide shared flat edges, including triangulation diagonals.
 
 import json
 import math
 import struct
 import sys
+import tempfile
 from pathlib import Path
 import bpy
 import bmesh
@@ -41,19 +42,19 @@ else:
     else:
         raise FileNotFoundError('Embedded script in an unsaved blend: save the blend or set PROJECT_PATH to an absolute VolumeTools path')
     ROOT = (anchor / hint).resolve()
-required = ('config.json', 'process_game_data.py', 'Source/__init__.py', 'Source/workflow.py', 'Source/blender_support.py')
+required = ('config.json', 'process_game_data.py', 'Source/__init__.py', 'Source/workflow.py', 'Source/blender/__init__.py', 'Source/blender/support.py')
 missing = [name for name in required if not (ROOT / name).is_file()]
 if missing:
     raise FileNotFoundError('PROJECT_PATH resolved to ' + str(ROOT) + '; missing: ' + ', '.join(missing))
 # Load the selected support file directly, before using any cached Source imports.
 import importlib.util
-spec = importlib.util.spec_from_file_location('_volume_tools_blender_support', ROOT / 'Source/blender_support.py')
+spec = importlib.util.spec_from_file_location('_volume_tools_blender_support', ROOT / 'Source/blender/support.py')
 support = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(support)
 support.activate_project(ROOT)
 ROOT = support.workflow_root(ROOT)
-from Source.blender_support import read_config, configured_path, identity
-from Source.workflow import write_json
+from Source.blender.support import read_config, configured_path, identity
+from Source.workflow import timestamp
 CONFIG = read_config(ROOT)
 
 
@@ -119,9 +120,8 @@ def prepare_buffers(obj):
 def export():
     if not math.isfinite(COPLANAR_ANGLE_DEGREES) or not 0 <= COPLANAR_ANGLE_DEGREES < 90:
         raise ValueError('COPLANAR_ANGLE_DEGREES must be finite and in [0, 90)')
-    output = configured_path(ROOT, CONFIG, 'blender_export_dir')
-    backup_root = configured_path(ROOT, CONFIG, 'output')
-    jobs, seen, manifests = [], {}, {}
+    output = configured_path(ROOT, CONFIG, 'exports_dir')
+    jobs, seen = [], {}
     for obj in bpy.context.scene.objects:
         if 'volume_tools_type' not in obj and 'volume_tools_map' not in obj:
             continue
@@ -134,35 +134,32 @@ def export():
         seen[key] = obj.name
         # Validate every job before replacing any output, including transformed float32 values.
         vb, ib, count, edges = prepare_buffers(obj)
-        jobs.append((category, map_name, vb, ib, count, edges))
-    if not jobs:
-        raise RuntimeError('No imported VolumeTools meshes in the current scene')
-    for category, _, _, _, _, _ in jobs:
-        if category in manifests:
-            continue
-        path = output / category / 'draw_counts.json'
-        value = json.loads(path.read_text(encoding='utf-8-sig')) if path.is_file() else {}
-        if not isinstance(value, dict) or any(not isinstance(k, str) or type(v) is not int or v < 0 for k, v in value.items()):
-            raise ValueError('Invalid draw-count manifest: ' + str(path))
-        manifests[category] = value
-    for category, map_name, vb, ib, count, edges in jobs:
-        directory = output / category
-        directory.mkdir(parents=True, exist_ok=True)
-        name = category + '_' + map_name
-        for suffix, data in (('_VB.buf', vb), ('_IB.buf', ib), ('_Edges.buf', edges)):
-            path = directory / (name + suffix)
-            temporary = path.with_suffix('.buf.tmp')
-            try:
-                temporary.write_bytes(data)
-                temporary.replace(path)
-            finally:
-                if temporary.exists():
-                    temporary.unlink()
-        manifests[category][map_name] = count
-        print('Exported', name, count // 3, 'triangles to', directory)
-    for category, counts in manifests.items():
-        write_json(output / category / 'draw_counts.json', dict(sorted(counts.items())), backup_root)
+        if count:
+            jobs.append((category, map_name, vb, ib, count, edges))
+    # Publish a complete new history entry; failures leave all earlier exports intact.
+    output.mkdir(parents=True, exist_ok=True)
+    destination = output / timestamp()
+    with tempfile.TemporaryDirectory(prefix='.volume-tools-', dir=output) as temporary:
+        bundle = Path(temporary) / 'bundle'
+        directory = bundle / 'Buffers'
+        directory.mkdir(parents=True)
+        counts = {}
+        for category, map_name, vb, ib, count, edges in sorted(jobs):
+            name = category + '_' + map_name
+            for suffix, data in (('_VB.buf', vb), ('_IB.buf', ib), ('_Edges.buf', edges)):
+                (directory / (name + suffix)).write_bytes(data)
+            counts[name] = count
+            print('Exported', name, count // 3, 'triangles')
+        (bundle / 'DrawFunc.json').write_text(json.dumps(counts, indent=2) + '\n', encoding='utf-8')
+        # Keep the effective config with the scene for subsequent manual exports.
+        bpy.context.scene['volume_tools_config'] = json.dumps(CONFIG)
+        result = bpy.ops.wm.save_as_mainfile(filepath=str(bundle / 'Volumes.blend'), copy=True)
+        if result != {'FINISHED'}:
+            raise RuntimeError('Blender failed to save Volumes.blend')
+        bundle.rename(destination)
+    print('Published VolumeTools export:', destination, flush=True)
     return jobs
 
 
-EXPORTED_JOBS = export()
+if __name__ == '__main__':
+    EXPORTED_JOBS = export()

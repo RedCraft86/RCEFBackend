@@ -1,43 +1,45 @@
 {
-  "game_data": "C:/Games/GRYPHLINK/games/Arknights Endfield/Endfield_Data",
-  "research_kit": "../ResearchKit",
-  "output": "Generated",
-  "native_inputs": "Generated/Native/Inputs",
-  "native_evidence": "Generated/Native/evidence.json",
-  "blender_export_dir": "Exports",
-  "regions": [
-    "map01",
-    "map02"
-  ],
-  "types": [
-    "walls",
-    "death",
-    "tp"
-  ],
-  "walls": {
-    "accepted_signatures": [
-      [
-        6,
-        114,
-        530440,
-        0,
-        1
-      ],
-      [
-        6,
-        114,
-        595978,
-        0,
-        1
-      ]
-    ],
-    "excluded_source_suffixes": {
-      "map01": [
-        "2_0",
-        "3_0"
-      ]
-    },
-    "maximum_compound_boxes": 100,
-    "maximum_decoded_bytes": 100000000
-  }
+	"game_data": "C:/Games/GRYPHLINK/games/Arknights Endfield/Endfield_Data", 
+	"blender_executable": "C:/Program Files/Blender Foundation/Blender 5.0/blender.exe",
+	"research_kit": "../ResearchKit",
+	"output": "Generated",
+	"native_inputs": "Generated/Native/Inputs",
+	"native_evidence": "Generated/Native/evidence.json",
+	"exports_dir": "Exports",
+	"jobs": 10,
+	"regions": [
+		"map01",
+		"map02"
+	],
+	"types": [
+		"walls",
+		"death",
+		"tp"
+	],
+	"walls": {
+		"accepted_signatures": [
+			[
+				6,
+				114,
+				530440,
+				0,
+				1
+			],
+			[
+				6,
+				114,
+				595978,
+				0,
+				1
+			]
+		],
+		"excluded_source_suffixes": {
+			"map01": [
+				"2_0",
+				"3_0"
+			]
+		},
+		"maximum_compound_boxes": 100,
+		"maximum_decoded_bytes": 100000000
+	}
 }

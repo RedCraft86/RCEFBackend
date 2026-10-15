@@ -18,7 +18,6 @@ def map_files(worker, paths, *, jobs, initializer=None, initargs=()):
         for path in paths:
             yield worker(path)
         return
-    # Improve: spawn avoids inheriting open images or writer state on Windows.
     with ProcessPoolExecutor(max_workers=jobs, mp_context=multiprocessing.get_context('spawn'),
                              initializer=initializer, initargs=initargs) as pool:
         iterator = iter(paths)

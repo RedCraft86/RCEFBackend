@@ -1,7 +1,7 @@
 """Import one invisible-wall mesh per selected map."""
 
 # User settings
-PROJECT_PATH = '..'  # VolumeTools folder containing config.json and Source/.
+PROJECT_PATH = '../..'  # VolumeTools folder containing config.json and Source/.
 MAPS = ['map01', 'map02']  # Explicit maps to import; no automatic discovery.
 MERGE_DISTANCE = 0.0001  # Vertex welding grid.
 
@@ -43,18 +43,18 @@ else:
     else:
         raise FileNotFoundError('Embedded script in an unsaved blend: save the blend or set PROJECT_PATH to an absolute VolumeTools path')
     ROOT = (anchor / hint).resolve()
-required = ('config.json', 'process_game_data.py', 'Source/__init__.py', 'Source/workflow.py', 'Source/blender_support.py')
+required = ('config.json', 'process_game_data.py', 'Source/__init__.py', 'Source/workflow.py', 'Source/blender/__init__.py', 'Source/blender/support.py')
 missing = [name for name in required if not (ROOT / name).is_file()]
 if missing:
     raise FileNotFoundError('PROJECT_PATH resolved to ' + str(ROOT) + '; missing: ' + ', '.join(missing))
 # Load the selected support file directly, before using any cached Source imports.
 import importlib.util
-spec = importlib.util.spec_from_file_location('_volume_tools_blender_support', ROOT / 'Source/blender_support.py')
+spec = importlib.util.spec_from_file_location('_volume_tools_blender_support', ROOT / 'Source/blender/support.py')
 support = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(support)
 support.activate_project(ROOT)
 ROOT = support.workflow_root(ROOT)
-from Source.blender_support import read_config, configured_path, identity, attach, activate
+from Source.blender.support import read_config, configured_path, identity, attach, activate
 CONFIG = read_config(ROOT)
 
 
@@ -62,10 +62,10 @@ def load_dataset(region):
     identity('walls', region)
     dataset = configured_path(ROOT, CONFIG, 'output') / 'InvisWalls' / (region + '-walls.json')
     data = json.loads(dataset.read_text(encoding='utf-8-sig'))
-    if data.get('region') != region or data.get('errors'):
+    if data.get('region') != region or data.get('status') != 'decoded' or data.get('errors'):
         raise ValueError('Wall dataset is mismatched or has decoding errors')
-    if not isinstance(data.get("boxes"), list) or "boundary" not in data:
-        raise ValueError("Wall dataset is missing boxes or boundary: " + str(dataset))
+    if not isinstance(data.get('boxes'), list):
+        raise ValueError('Wall dataset is missing boxes: ' + str(dataset))
     return region, dataset, data
 
 
@@ -98,6 +98,9 @@ def import_dataset(region, dataset, data):
                     for loop, value in zip(face.loops, UVS):
                         loop[uv].uv = value
         bm.normal_update()
+        if not bm.faces:
+            print('Skipped empty walls:', region)
+            return None
         mesh = bpy.data.meshes.new('Walls')
         bm.to_mesh(mesh)
         if mesh.validate():
@@ -106,7 +109,7 @@ def import_dataset(region, dataset, data):
         mesh.update()
     finally:
         bm.free()
-    obj = attach(mesh, 'walls', region, dataset, data['boundary'])
+    obj = attach(mesh, 'walls', region, dataset)
     obj['volume_count'] = len(data['boxes'])
     activate(obj)
     print('Imported', region, len(data['boxes']), 'invisible walls')
@@ -120,7 +123,8 @@ def main():
         identity('walls', region)
     maps = list(dict.fromkeys(MAPS))
     prepared = [load_dataset(region) for region in maps]
-    return [import_dataset(*entry) for entry in prepared]
+    return [obj for entry in prepared if (obj := import_dataset(*entry)) is not None]
 
 
-IMPORTED_OBJECTS = main()
+if __name__ == '__main__':
+    IMPORTED_OBJECTS = main()

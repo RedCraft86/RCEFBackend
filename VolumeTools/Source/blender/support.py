@@ -12,7 +12,7 @@ def workflow_root(project_root):
     """Validate the explicit root resolved by the external/embedded script bootstrap."""
     root = Path(project_root).resolve()
     required = ('config.json', 'process_game_data.py', 'Source/__init__.py',
-                'Source/workflow.py', 'Source/blender_support.py')
+                'Source/workflow.py', 'Source/blender/__init__.py', 'Source/blender/support.py')
     missing = [name for name in required if not (root / name).is_file()]
     if missing:
         raise FileNotFoundError('PROJECT_PATH resolved to ' + str(root) + '; missing: ' + ', '.join(missing))
@@ -30,7 +30,7 @@ def activate_project(project_root):
                 del sys.modules[name]
     else:
         # Reopen/rerun picks up helper edits even within the same Blender session.
-        sys.modules.pop('Source.blender_support', None)
+        sys.modules.pop('Source.blender.support', None)
         sys.modules.pop('Source.workflow', None)
     location = str(root)
     if location in sys.path:
@@ -39,6 +39,9 @@ def activate_project(project_root):
 
 
 def read_config(root):
+    saved = bpy.context.scene.get('volume_tools_config')
+    if saved:
+        return json.loads(saved)
     return json.loads((root / 'config.json').read_text(encoding='utf-8-sig'))
 
 
@@ -53,7 +56,7 @@ def identity(kind, region):
     return CATEGORIES[kind], 'Map' + region[3:]
 
 
-def attach(mesh, kind, region, dataset, boundary):
+def attach(mesh, kind, region, dataset):
     category, map_name = identity(kind, region)
     name = category + '_' + map_name
     mesh.name = name
@@ -68,7 +71,6 @@ def attach(mesh, kind, region, dataset, boundary):
     obj['volume_tools_type'] = kind
     obj['volume_tools_map'] = region
     obj['dataset'] = str(dataset.resolve())
-    obj['boundary'] = boundary
     return obj
 
 

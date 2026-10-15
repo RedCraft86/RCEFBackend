@@ -60,7 +60,6 @@ def validate_schema(evidence):
     schemas = evidence['wrappers']
     if evidence.get('stringWireFormat') != 'int32-reference':
         raise ValueError('Current string formatter evidence missing; run process_game_data.py --prepare-native')
-    # Fix: the current base record includes factory visibility and its nested descriptor.
     base = validate_layout(schemas, BASE_TYPE, BASE_LAYOUT)
     hide = validate_layout(schemas, HIDE_TYPE, HIDE_LAYOUT)
     widths = evidence.get('enumWidths', {})
@@ -121,7 +120,6 @@ def prepare(config):
     output = resolve_path(config['output'])
     directory = resolve_path(config['native_inputs'])
     sources = installed_paths(config)
-    # Fix: preparation always analyzes copies and must never overwrite installed native files.
     for name in NATIVE_NAMES:
         if (directory / name).resolve() == sources[name].resolve():
             raise ValueError('native_inputs must be separate from installed game inputs')
@@ -163,7 +161,6 @@ def prepare(config):
                             'members': [m.name for m in by_name[entry['wrapperName']].members]}
                            for entry in switch['entries']]
         print(family, len(families[family]), 'verified routes', flush=True)
-    # Fix: the selected formatter reads one int32, handles -1/-2, then resolves a pool ID.
     def method(owner, name):
         matches = [m for m in image.metadata.methods
                    if image.type_name(m.declaring_type) == owner and image.metadata.string(m.name_index) == name]
@@ -182,7 +179,6 @@ def prepare(config):
     defaults = field_defaults(image.metadata)
     enum_names = ('Beyond.Gameplay.EFunctionAreaType', 'Beyond.Gameplay.Core.TriggerObserverComponent+Shape', 'Beyond.Gameplay.RepatriateRealSource', 'Proto.SCENE_CROSS_BORDER_OP', 'Proto.SCENE_CROSS_BORDER_REASON')
     enums = {name: {row['name']: row['id'] for row in native_enum_members(image.metadata, defaults, image.pe, image.registration, name)} for name in enum_names}
-    # Improve: enum collection elements need native widths even without a direct wrapper member.
     evidence = {'format': FORMAT, 'version': VERSION, 'nativeInputs': hashes, 'families': families,
                 'stringWireFormat': 'int32-reference',
                 'stringFormatter': {'dispatcherVa': hex(start), 'resolverVa': hex(target),

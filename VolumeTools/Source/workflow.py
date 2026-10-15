@@ -22,9 +22,11 @@ def load_config(path=None):
     config = json.loads(source.read_text(encoding='utf-8-sig'))
     from Source.parallel import default_jobs
     config.setdefault('jobs', default_jobs())
+    if 'blender_executable' in config and (not isinstance(config['blender_executable'], str) or not config['blender_executable'].strip()):
+        raise ValueError('blender_executable must be a nonempty executable path or command')
     if type(config['jobs']) is not int or config['jobs'] < 1:
         raise ValueError('jobs must be a positive integer')
-    for name in ('game_data', 'research_kit', 'output', 'native_inputs', 'native_evidence', 'blender_export_dir'):
+    for name in ('game_data', 'research_kit', 'output', 'native_inputs', 'native_evidence', 'exports_dir'):
         if not isinstance(config.get(name), str) or not config[name]:
             raise ValueError('Missing configured path: ' + name)
     regions = config.get('regions')
