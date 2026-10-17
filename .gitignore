@@ -11,12 +11,12 @@
 
 # Allow tools and the ResearchKit submodule
 !TextMateBundle/
-!EvictZones/
+!EvictBorders/
 !VolumeTools/
 !ResearchKit/
 
 # Ignore cache data files
-EvictZones/Exports/
+EvictBorders/Exports/
 VolumeTools/**/__pycache__/
 VolumeTools/Generated/
 VolumeTools/Exports/

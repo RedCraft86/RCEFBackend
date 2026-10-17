@@ -83,7 +83,7 @@ def edge_masks(mesh, obj):
 def prepare(obj):
     """Prepare a private mesh and validate all buffer values before publishing."""
     editing = obj.mode == 'EDIT'
-    mesh = bpy.data.meshes.new('_EvictZoneExport') if editing else obj.data.copy()
+    mesh = bpy.data.meshes.new('_EvictBorderExport') if editing else obj.data.copy()
     bm = None
     try:
         if editing:
@@ -165,7 +165,7 @@ def export():
             replace_file(output / (obj.name + '_IB.buf'), ib)
             replace_file(output / (obj.name + '_Edges.buf'), edges)
         counts = {obj.name: count for obj, _, _, _, count, _ in jobs}
-        replace_file(output / 'EvictZones_DrawFunc.json', (json.dumps(counts, indent=2) + '\n').encode('utf-8'))
+        replace_file(output / 'EvictBorders_DrawFunc.json', (json.dumps(counts, indent=2) + '\n').encode('utf-8'))
         for obj, mesh, _, _, count, _ in jobs:
             print('Exported', obj.name, count // 3, 'triangles;', count, 'indices to', output)
         return counts
