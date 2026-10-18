@@ -2,7 +2,7 @@
 import hashlib
 import shutil
 from pathlib import Path
-from Source.workflow import configure_research_kit, resolve_path, timestamp, write_json
+from Source.workflow import resolve_path, timestamp, write_json
 
 VERSION = 3
 FORMAT = 'endfield-zone-native-evidence'
@@ -52,6 +52,41 @@ def installed_paths(config):
     return {'GameAssembly.dll': game.parent / 'GameAssembly.dll',
             'global-metadata.dat': game / 'il2cpp_data/Metadata/global-metadata.dat'}
 
+def validate_prefix_schema(schemas):
+    """Require native declarations that let the decoder reach functionArea safely."""
+    def declared_members(type_name):
+        schema = schemas.get(type_name, {})
+        members = schema.get('members', [])
+        names = [member.get('name') for member in members]
+        if (not members or any(not isinstance(name, str) or not name for name in names)
+                or len(set(names)) != len(names)
+                or schema.get('memberOrder') != names
+                or schema.get('serializedMemberCount') != len(members)
+                or schema.get('framesAsRawStruct') is not False
+                or any(not isinstance(member.get('declaredType'), str)
+                       or not member['declaredType'] for member in members)):
+            raise ValueError('Required native schema missing or incomplete: ' + type_name
+                             + '; run process_game_data.py --prepare-native')
+        return {member['name']: member['declaredType'] for member in members}
+
+    fields = declared_members('Beyond.Gameplay.LevelData')
+    area_type = 'Beyond.Gameplay.LevelFunctionAreaData'
+    if fields.get('functionArea') != area_type:
+        raise ValueError('Required native LevelData.functionArea declaration missing or unsupported; '
+                         'run process_game_data.py --prepare-native')
+    area_fields = declared_members(area_type)
+    required = {
+        'baseData': BASE_TYPE,
+        'functionAreaConditions': area_type + '+ConditionData',
+        'ranges': 'Beyond.Gameplay.ThreeDimRange',
+        'specificDatas': area_type + '+FunctionAreaSpecificData',
+    }
+    if any(area_fields.get(name) != 'System.Collections.Generic.List`1<' + item_type + '>'
+           for name, item_type in required.items()):
+        raise ValueError('Required native functionArea collections missing or unsupported; '
+                         'run process_game_data.py --prepare-native')
+
+
 def validate_schema(evidence):
     if evidence.get('format') != FORMAT or evidence.get('version') != VERSION:
         raise ValueError(f'Unsupported native evidence format/version: expected {FORMAT} v{VERSION}, '
@@ -60,6 +95,7 @@ def validate_schema(evidence):
     schemas = evidence['wrappers']
     if evidence.get('stringWireFormat') != 'int32-reference':
         raise ValueError('Current string formatter evidence missing; run process_game_data.py --prepare-native')
+    validate_prefix_schema(schemas)
     base = validate_layout(schemas, BASE_TYPE, BASE_LAYOUT)
     hide = validate_layout(schemas, HIDE_TYPE, HIDE_LAYOUT)
     widths = evidence.get('enumWidths', {})
@@ -144,12 +180,11 @@ def prepare(config):
         finally:
             if temporary.exists(): temporary.unlink()
     verify_hashes(hashes, sources, 'Installed')
-    configure_research_kit(config)
-    from scripts.game_data.il2cpp.native_image import NativeImage
-    from scripts.game_data.memorypack.wrapper_members import derive_from_image, enum_widths_from_image, unmanaged_value_sizes_from_image
-    from scripts.game_data.memorypack.union_dispatch import read_union_switch
-    from scripts.game_data.levelscript_union_tags import FAMILY_BASES, short_name
-    from scripts.game_data.il2cpp.protocol import field_defaults, native_enum_members
+    from Source.gamedata.il2cpp.native_image import NativeImage
+    from Source.gamedata.memorypack.wrapper_members import derive_from_image, enum_widths_from_image, unmanaged_value_sizes_from_image
+    from Source.gamedata.memorypack.union_dispatch import read_union_switch
+    from Source.gamedata.unions import FAMILY_BASES, short_name
+    from Source.gamedata.il2cpp.protocol import field_defaults, native_enum_members
     image = NativeImage(directory / 'GameAssembly.dll', directory / 'global-metadata.dat', label='VolumeTools')
     wrappers = derive_from_image(image)
     by_name = {w.name: w for w in wrappers.values()}

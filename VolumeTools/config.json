@@ -1,7 +1,7 @@
 {
 	"game_data": "C:/Games/GRYPHLINK/games/Arknights Endfield/Endfield_Data", 
 	"blender_executable": "C:/Program Files/Blender Foundation/Blender 5.0/blender.exe",
-	"research_kit": "../ResearchKit",
+	"animestudio_cli": "../Experimental/ResearchKit/tools/AnimeStudio/AnimeStudio.CLI/bin/Release/net9.0-windows/AnimeStudio.CLI.exe",
 	"output": "Generated",
 	"native_inputs": "Generated/Native/Inputs",
 	"native_evidence": "Generated/Native/evidence.json",

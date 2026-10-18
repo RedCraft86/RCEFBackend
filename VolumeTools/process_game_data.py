@@ -12,9 +12,9 @@ from Source.zones.native import load_evidence, prepare
 
 
 def extract_inputs(config, output, regions, selected):
-    engine = resolve_path(config['research_kit']) / 'tools/AnimeStudio/AnimeStudio.CLI/bin/Release/net9.0-windows/AnimeStudio.CLI.exe'
+    engine = resolve_path(config['animestudio_cli'])
     if not engine.is_file():
-        raise FileNotFoundError('Build ResearchKit AnimeStudio CLI first: ' + str(engine))
+        raise FileNotFoundError('AnimeStudio CLI not found; build it or set animestudio_cli: ' + str(engine))
     game = resolve_path(config['game_data'])
     primary = game / 'Persistent' if (game / 'Persistent/VFS').is_dir() else game / 'StreamingAssets'
     fallback = ['--fallback-assets', str(game / 'StreamingAssets')] if primary.name == 'Persistent' else []
@@ -101,7 +101,7 @@ def process(config, *, decode_only=False, overrides=None):
             'nativeInputs': evidence['nativeInputs'] if evidence else None}, output)
     summaries = []
     if 'walls' in selected:
-        wall_config = {**config, **config['walls'], 'research_kit': str(resolve_path(config['research_kit']))}
+        wall_config = {**config, **config['walls']}
         for region in regions or discover(inputs['walls'], 'walls'):
             data = walls.extract(inputs['walls'], output / 'InvisWalls', region, wall_config)
             summaries.append({'region': region, 'type': 'walls', 'count': len(data['boxes']),

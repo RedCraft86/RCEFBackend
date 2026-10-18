@@ -1,0 +1,236 @@
+"""Native type names and enum constants needed for VolumeTools evidence."""
+
+from __future__ import annotations
+import importlib.util
+import struct
+import sys
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+@lru_cache(maxsize=None)
+def load_metadata_helper(path: Path) -> Any:
+    """Load the metadata helper once, preserving its exception identities."""
+    spec = importlib.util.spec_from_file_location("endfield_protocol_metadata", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load metadata helper: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_native_mapper(path: Path) -> Any:
+    spec = importlib.util.spec_from_file_location("endfield_protocol_native_mapper", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load native mapper: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+RUNTIME_PRIMITIVE_TYPE_NAMES = {
+    0x01: "void",
+    0x02: "bool",
+    0x03: "char",
+    0x04: "sbyte",
+    0x05: "byte",
+    0x06: "short",
+    0x07: "ushort",
+    0x08: "int",
+    0x09: "uint",
+    0x0A: "long",
+    0x0B: "ulong",
+    0x0C: "float",
+    0x0D: "double",
+    0x0E: "string",
+    0x18: "nint",
+    0x19: "nuint",
+    0x1C: "object",
+}
+
+
+def runtime_generic_inst_type_pointers(pe: Any, generic_inst_va: int) -> list[int]:
+    offset, _section, _rva = pe.file_offset_for_va(generic_inst_va)
+    if offset is None:
+        raise RuntimeError(
+            f"generic instantiation VA is outside GameAssembly: 0x{generic_inst_va:x}"
+        )
+    argc, argv_va = struct.unpack_from("<QQ", pe.buf, offset)
+    if argc > 64:
+        raise RuntimeError(
+            f"implausible generic argument count {argc} at 0x{generic_inst_va:x}"
+        )
+    return [pe.u64_at_va(argv_va + index * 8) for index in range(argc)]
+
+
+def runtime_type_name(
+    pe: Any,
+    metadata: Any,
+    type_va: int,
+    *,
+    depth: int = 0,
+    seen: frozenset[int] = frozenset(),
+) -> str:
+    """Name one MetadataRegistration Il2CppType, including generic instances."""
+    if depth > 12:
+        return "<generic-depth-limit>"
+    if type_va in seen:
+        return f"<recursive-type:0x{type_va:x}>"
+    offset, _section, _rva = pe.file_offset_for_va(type_va)
+    if offset is None:
+        return f"<type-va-outside-image:0x{type_va:x}>"
+    data = struct.unpack_from("<Q", pe.buf, offset)[0]
+    type_code = pe.buf[offset + 10]
+    primitive = RUNTIME_PRIMITIVE_TYPE_NAMES.get(type_code)
+    if primitive is not None:
+        return primitive
+    if type_code in {0x11, 0x12}:
+        if 0 <= data < len(metadata.types):
+            return metadata.type_full_name(metadata.types[data])
+        return f"<type-definition:{data}>"
+    if type_code == 0x15:
+        generic_offset, _section, _rva = pe.file_offset_for_va(data)
+        if generic_offset is None:
+            return f"<generic-class-va-outside-image:0x{data:x}>"
+        definition_type_va, class_inst_va = struct.unpack_from(
+            "<QQ", pe.buf, generic_offset
+        )
+        next_seen = seen | {type_va}
+        definition_name = runtime_type_name(
+            pe, metadata, definition_type_va, depth=depth + 1, seen=next_seen
+        )
+        arguments = [
+            runtime_type_name(
+                pe,
+                metadata,
+                argument_type_va,
+                depth=depth + 1,
+                seen=next_seen,
+            )
+            for argument_type_va in runtime_generic_inst_type_pointers(
+                pe, class_inst_va
+            )
+        ]
+        return f"{definition_name}<{','.join(arguments)}>"
+    if type_code in {0x13, 0x1E}:  # IL2CPP_TYPE_VAR / MVAR
+        kind = "VAR" if type_code == 0x13 else "MVAR"
+        return f"{kind}[{data}]"
+    if type_code == 0x0F:
+        return runtime_type_name(
+            pe, metadata, data, depth=depth + 1, seen=seen | {type_va}
+        ) + "*"
+    if type_code == 0x1D:
+        return runtime_type_name(
+            pe, metadata, data, depth=depth + 1, seen=seen | {type_va}
+        ) + "[]"
+    return f"<runtime-type:0x{type_code:x}:data=0x{data:x}>"
+
+
+def read_compressed_uint32(data: bytes, offset: int) -> tuple[int, int]:
+    first = data[offset]
+    if first & 0x80 == 0:
+        return first, 1
+    if first & 0xC0 == 0x80:
+        return ((first & 0x3F) << 8) | data[offset + 1], 2
+    if first & 0xE0 == 0xC0:
+        return (
+            ((first & 0x1F) << 24)
+            | (data[offset + 1] << 16)
+            | (data[offset + 2] << 8)
+            | data[offset + 3],
+            4,
+        )
+    if first == 0xF0:
+        return struct.unpack_from(">I", data, offset + 1)[0], 5
+    if first == 0xFE:
+        return 0xFFFFFFFE, 1
+    if first == 0xFF:
+        return 0xFFFFFFFF, 1
+    raise ValueError(f"unsupported compressed uint prefix 0x{first:02x}")
+
+
+def read_compressed_int32(data: bytes, offset: int) -> tuple[int, int]:
+    unsigned, size = read_compressed_uint32(data, offset)
+    return (unsigned >> 1) ^ -(unsigned & 1), size
+
+
+def field_defaults(metadata: Any) -> dict[int, tuple[int, int]]:
+    section = metadata.sections["fieldDefaultValues"]
+    if section.size % 12:
+        raise RuntimeError("fieldDefaultValues is not aligned to 12-byte records")
+    out: dict[int, tuple[int, int]] = {}
+    for position in range(section.offset, section.offset + section.size, 12):
+        field_index, type_index, data_index = struct.unpack_from(
+            "<iii", metadata.buf, position
+        )
+        if field_index in out:
+            raise RuntimeError(f"duplicate field default for field {field_index}")
+        out[field_index] = (type_index, data_index)
+    return out
+
+
+def native_enum_members(
+    metadata: Any,
+    defaults: dict[int, tuple[int, int]],
+    pe: Any,
+    registration: dict[str, Any],
+    type_name: str,
+) -> list[dict[str, Any]]:
+    """Decode Int32- or byte-backed enum defaults with selected native types.
+
+    The caller must authenticate ``pe`` and ``metadata`` as the same selected
+    installed build. Metadata default blobs do not identify their primitive
+    type by themselves; the MetadataRegistration type table does. Unsupported
+    backing types fail closed rather than passing through the Int32 decoder.
+    """
+    owner = next((row for row in metadata.types if metadata.type_full_name(row) == type_name), None)
+    if owner is None:
+        raise RuntimeError(f"metadata type not found: {type_name}")
+    fields = list(metadata.fields_for(owner))
+    backing = [row for row in fields if metadata.string(row.name_index) == "value__"]
+    if len(backing) != 1:
+        raise RuntimeError(f"enum value__ field differs: {type_name}")
+    type_table = int(registration["types"], 16)
+    type_count = int(registration["typesCount"])
+
+    def primitive(type_index: int) -> str:
+        if not 0 <= type_index < type_count:
+            raise RuntimeError(f"default primitive type index outside selected table: {type_name}:{type_index}")
+        type_va = pe.u64_at_va(type_table + type_index * 8)
+        if not type_va:
+            raise RuntimeError(f"missing selected primitive type: {type_name}:{type_index}")
+        return runtime_type_name(pe, metadata, type_va)
+
+    backing_type = primitive(backing[0].type_index)
+    if backing_type not in {"byte", "int"}:
+        raise RuntimeError(f"unsupported enum backing type: {type_name}:{backing_type}")
+    section = metadata.sections["fieldAndParameterDefaultValueData"]
+    rows: list[dict[str, Any]] = []
+    for field in fields:
+        name = metadata.string(field.name_index)
+        if name == "value__":
+            continue
+        default = defaults.get(field.index)
+        if default is None:
+            continue
+        default_type, data_index = default
+        if primitive(default_type) != backing_type:
+            raise RuntimeError(f"enum member default type differs: {type_name}.{name}")
+        offset = section.offset + data_index
+        if not section.offset <= offset < section.offset + section.size:
+            raise RuntimeError(f"enum member default offset outside blob: {type_name}.{name}")
+        if backing_type == "byte":
+            value = metadata.buf[offset]
+        else:
+            value, size = read_compressed_int32(metadata.buf, offset)
+            if offset + size > section.offset + section.size:
+                raise RuntimeError(f"enum member default exceeds blob: {type_name}.{name}")
+        rows.append({
+            "id": value,
+            "name": name,
+            "fieldIndex": field.index,
+            "token": f"0x{field.token:08x}",
+        })
+    return sorted(rows, key=lambda row: (row["id"], row["name"]))

@@ -1,4 +1,0 @@
-[submodule "ResearchKit"]
-path = ResearchKit
-url = https://github.com/RedCraft86/EFResearchKit.git
-branch = release

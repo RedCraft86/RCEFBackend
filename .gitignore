@@ -13,7 +13,6 @@
 !TextMateBundle/
 !EvictBorders/
 !VolumeTools/
-!ResearchKit/
 
 # Ignore cache data files
 EvictBorders/Exports/

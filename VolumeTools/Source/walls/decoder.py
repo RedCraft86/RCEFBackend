@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 def decode(source, expected):
-    """Decode the kit's inverted LZ4 format with overlapping slice copies."""
+    """Decode inverted LZ4 payloads with overlapping slice copies."""
     output = bytearray()
     cursor = 0
     while cursor < len(source):
@@ -70,8 +70,6 @@ _PATTERN = None
 
 def initialize_worker(config, scene):
     global _CONFIG, _SCENE, _PATTERN
-    from Source.workflow import configure_research_kit
-    configure_research_kit(config)
     _CONFIG, _SCENE = config, Path(scene).resolve()
     lengths={64,68}
     lengths.update(64+stride*n for stride in (52,56)
@@ -81,7 +79,6 @@ def initialize_worker(config, scene):
 
 def scan_file(path):
     """Return geometry, signatures, and source paths for selection and deduplication."""
-    from scripts.game_data.streaming.framing import _table_layout
     path = Path(path).resolve()
     result = {'source': str(path.relative_to(_SCENE)), 'boxes': [], 'occurrences': 0,
               'decoded': False, 'errors': []}

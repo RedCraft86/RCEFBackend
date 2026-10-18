@@ -28,7 +28,7 @@ def scan_file(path):
               'zones': [], 'errors': [], 'prefixes': [], 'unresolved': []}
     try:
         framed=_CODEC.frame(raw); area=framed['fields'].get('functionArea'); stop=framed.get('openField')
-        if stop and (stop['name'].startswith('functionArea') or stop['name'].split('.')[0] in _CODEC.leveldata.LEVELDATA_FIELDS[:17]):
+        if stop and stop['name'].split('.')[0] in _CODEC.prefix_fields:
             result['prefixes'].append({'region':region,'source':source,'stop':stop}); return result
         if not area or area.get('value','present') is None: return result
         members=area.get('members',{}); bases=members.get('baseData',{}).get('rows',[]); ranges=members.get('ranges',{}).get('rows',[]); specifics=members.get('specificDatas',{}).get('rows',[])

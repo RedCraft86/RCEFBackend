@@ -3,7 +3,6 @@ import datetime
 import json
 import re
 import shutil
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -26,7 +25,7 @@ def load_config(path=None):
         raise ValueError('blender_executable must be a nonempty executable path or command')
     if type(config['jobs']) is not int or config['jobs'] < 1:
         raise ValueError('jobs must be a positive integer')
-    for name in ('game_data', 'research_kit', 'output', 'native_inputs', 'native_evidence', 'exports_dir'):
+    for name in ('game_data', 'animestudio_cli', 'output', 'native_inputs', 'native_evidence', 'exports_dir'):
         if not isinstance(config.get(name), str) or not config[name]:
             raise ValueError('Missing configured path: ' + name)
     regions = config.get('regions')
@@ -43,15 +42,6 @@ def load_config(path=None):
             if key not in walls:
                 raise ValueError('Missing wall setting: ' + key)
     return config
-
-
-def configure_research_kit(config):
-    kit = resolve_path(config['research_kit'])
-    if not (kit / 'scripts/game_data/leveldata_binary.py').is_file():
-        raise FileNotFoundError('ResearchKit source checkout is required: ' + str(kit))
-    if str(kit) not in sys.path:
-        sys.path.insert(0, str(kit))
-    return kit
 
 
 def timestamp():

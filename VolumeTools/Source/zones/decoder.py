@@ -1,20 +1,17 @@
 """Strict VolumeTools MemoryPack decoding with current copied-build evidence."""
 import math
 import struct
-import types
-from Source.workflow import configure_research_kit
 from .native import BASE_TYPE, load_evidence, validate_schema
 
 class ZoneCodec:
     def __init__(self, config, evidence=None):
-        configure_research_kit(config)
-        from scripts.game_data import leveldata_binary
-        from scripts.game_data.codecs.leveldata import memorypack
-        self.leveldata = leveldata_binary
-        self.memorypack = memorypack
+        from Source.gamedata import primitives
+        self.memorypack = primitives
         evidence = load_evidence(config) if evidence is None else evidence
         validate_schema(evidence)
         self.schemas = evidence['wrappers']
+        field_order = self.schemas['Beyond.Gameplay.LevelData']['memberOrder']
+        self.prefix_fields = tuple(field_order[:field_order.index('functionArea') + 1])
         self.enum_widths = evidence['enumWidths']
         self.unmanaged_sizes = evidence.get('unmanagedSizes',{})
         self.hashes = evidence['nativeInputs']
@@ -22,7 +19,7 @@ class ZoneCodec:
         by_name = {s['wrapperName']: s for s in self.schemas.values()}
         for family, base in [('ConditionRuntimeBase', 'Beyond.Gameplay.ConditionRuntimeBase'), ('FunctionAreaSpecificData', 'Beyond.Gameplay.LevelFunctionAreaData+FunctionAreaSpecificData')]:
             self.unions[base] = {entry['tag']: by_name[entry['wrapperName']]['wrappedType'] for entry in evidence['families'][family]}
-        from scripts.game_data.levelscript_union_tags import FAMILY_BASES
+        from Source.gamedata.unions import FAMILY_BASES
         for family, wrapper in FAMILY_BASES.items():
             base = by_name.get('Beyond.MemoryPack.' + wrapper)
             if base and family in evidence['families']:
@@ -47,9 +44,7 @@ class ZoneCodec:
         primitive={'bool':self.memorypack.read_bool,'int':self.memorypack.read_i32,'uint':self.memorypack.read_u32,'ulong':self.memorypack.read_u64,'long':self.memorypack.read_i64,'float':self.memorypack.read_f32,'double':self.memorypack.read_f64,'string':self.string_reference}
         if type_name in primitive: return checked(primitive[type_name](data,offset))
         if type_name=='System.Nullable`1<float>':
-            from scripts.game_data.codecs.levelscript.enemies import _nullable_float, LevelEnemyCodecError
-            try: return _nullable_float(data,offset,'extraDelayToRecycleTime')
-            except LevelEnemyCodecError as exc: raise ValueError(str(exc)) from exc
+            return self.memorypack.read_nullable_f32(data,offset)
         if type_name.startswith('System.Nullable`1<'):
             child=type_name.split('<',1)[1][:-1]
             widths={'bool':1,'int':4,'uint':4,'float':4,'long':8,'ulong':8,'double':8}
@@ -153,29 +148,6 @@ class ZoneCodec:
         return result
 
     def frame(self,data):
-        if 'Beyond.Gameplay.LevelData' in self.schemas:
-            return self.frame_current(data)
-        def conditions(b,o):
-            try: return self.collection(b,o,'Beyond.Gameplay.LevelFunctionAreaData+ConditionData')
-            except ValueError as exc: raise self.leveldata.LevelFunctionAreaCodecError(str(exc)) from exc
-        def specifics(b,o):
-            try: return self.collection(b,o,'Beyond.Gameplay.LevelFunctionAreaData+FunctionAreaSpecificData')
-            except ValueError as exc: raise self.leveldata.LevelFunctionAreaCodecError(str(exc)) from exc
-        def condition(b,o,field,**kwargs):
-            try: return self.read(b,o,'Beyond.Gameplay.ConditionRuntimeBase')
-            except ValueError as exc: raise self.leveldata.LevelFunctionAreaCodecError(str(exc)) from exc
-        def bases(b,o):
-            try: return self.base_collection(b,o)
-            except ValueError as exc: raise self.leveldata.LevelFunctionAreaCodecError(str(exc)) from exc
-        scope=dict(self.leveldata.frame_leveldata_named_prefix.__globals__)
-        def dynamic(b,o):
-            try: return self.collection(b,o,'Beyond.Gameplay.LevelDynamicOccludeAreaData')
-            except ValueError: return None
-        scope.update(_decode_function_area_base_data_list=bases,decode_function_area_condition_list=conditions,decode_function_area_specific_data_list=specifics,decode_condition_runtime=condition,decode_dynamic_occlude_area_list=dynamic)
-        reader=types.FunctionType(self.leveldata.frame_leveldata_named_prefix.__code__,scope)
-        return reader(data)
-
-    def frame_current(self,data):
         """Decode the native-declared prefix through functionArea; later fields remain outside scope."""
         schema=self.schemas['Beyond.Gameplay.LevelData']
         if not data or data[0]!=schema['serializedMemberCount']:
@@ -210,4 +182,3 @@ class ZoneCodec:
         return {'fields':fields,'closedFields':closed,'openField':stop,'bytesConsumed':cursor,
                 'opaqueRemainder':{'startOffset':cursor,'endOffset':len(data)},
                 'evidenceBoundary':'Current native declarations through functionArea; string references retained without resolved text.'}
-

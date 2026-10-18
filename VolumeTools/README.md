@@ -1,31 +1,29 @@
 # VolumeTools
 
-Extract invisible walls, death zones, and teleport zones from offline anime game files, automatically build a Blender scene, and export its buffers. Requires ResearchKit, installed game data, and Blender. Eviction zones, dynamic walls, and unsupported layouts are excluded.
+Extract invisible walls, death zones, and teleport zones from offline anime game files, automatically build a Blender scene, and export its buffers. Requires Python 3.10+, AnimeStudio CLI, installed game data, and Blender. Decoding and native-evidence helpers are included locally. Eviction zones, dynamic walls, and unsupported layouts are excluded.
 
 ## Setup
 
-Requires Windows, Python compatible with ResearchKit, and the AnimeStudio CLI. From the `RCEFBackend` folder, initialize ResearchKit and its nested submodules, then build the CLI:
+Requires Windows, Python 3.10+, and the AnimeStudio CLI. Install the .NET 9 SDK, then clone the Endfield-compatible AnimeStudio fork and build its CLI. Run these commands from the `RCEFBackend` folder:
 
 ```powershell
-git submodule sync --recursive
-git submodule update --init --recursive ResearchKit
-cd ResearchKit
-.\scripts\game_data\extraction\animestudio\setup_dotnet9.bat
-.\scripts\game_data\extraction\animestudio\rebuild.bat --target CLI
+git clone --branch endfield https://github.com/RedCraft86/EFStudio.git AnimeStudio
+cd AnimeStudio
+dotnet build AnimeStudio.CLI/AnimeStudio.CLI.csproj -c Release -f net9.0-windows
 cd ../VolumeTools
 ```
 
-Edit `config.json` to set the installed `game_data` path. Defaults are:
+Edit `config.json` to set the installed `game_data` path and point `animestudio_cli` to the built executable. The CLI path below is an example for the checkout above; the other values are defaults:
 
-| Setting | Default |
+| Setting | Value |
 | --- | --- |
-| `research_kit` | `../ResearchKit` |
+| `animestudio_cli` | `../AnimeStudio/AnimeStudio.CLI/bin/Release/net9.0-windows/AnimeStudio.CLI.exe` |
 | `output` | `Generated` |
 | `exports_dir` | `Exports` |
 | `regions` | `map01`, `map02` |
 | `types` | `walls`, `death`, `tp` |
 
-Configuration paths resolve relative to VolumeTools, including custom configs. CLI paths resolve from the terminal's working directory. Set `regions: []` to discover all mapNN maps. The nested `walls` settings apply only to walls.
+Configuration paths resolve relative to VolumeTools, including custom configs. Paths passed as CLI arguments resolve from the terminal's working directory. The configured `animestudio_cli` is an executable file path, resolved relative to VolumeTools; it can point to a separate AnimeStudio installation. Only archive extraction requires AnimeStudio; `--decode-only` and `--prepare-native` do not require the executable. Set `regions: []` to discover all mapNN maps. The nested `walls` settings apply only to walls.
 
 Blender is discovered through PATH or installed Windows versions under `Program Files/Blender Foundation`. Set optional `blender_executable` to an executable path or command to override discovery.
 
@@ -37,6 +35,7 @@ VolumeTools/
   config.json
   README.md
   Source/
+    gamedata/            # Primitives, native metadata readers, and evidence derivation
     blender/             # Launcher, scene builder, import/export scripts, shared helpers
     walls/               # Invisible-wall decoding
     zones/               # Zone decoding, geometry, and native evidence
@@ -84,7 +83,7 @@ python -B process_game_data.py --prepare-native
 python -B process_game_data.py
 ```
 
-Native evidence version 3 supports the current 15-member function-area layout, generated union routes, and the native four-byte string-reference formatter. String references are retained as `{"stringReference": id}`; their text is unresolved. Refresh older evidence with `--prepare-native`. Saved inputs with matching native hashes can then be reused with `--decode-only`; 13-member inputs and build mismatches remain unsupported.
+Native evidence is derived using the local `Source/gamedata` readers. Native evidence version 3 supports the current 15-member function-area layout, generated union routes, and the native four-byte string-reference formatter. String references are retained as `{"stringReference": id}`; their text is unresolved. The native LevelData schema and its function-area declarations are required; the legacy handwritten fallback has been removed. Regenerate missing or incomplete evidence with `--prepare-native`. Saved inputs with matching native hashes can then be reused with `--decode-only`; 13-member inputs and build mismatches remain unsupported.
 
 Datasets go to `Generated/InvisWalls` and `Generated/Zones`; native evidence lives in `Generated/Native`. Check `Generated/processing-report.json` for decoding results. Replaced datasets are backed up, and failures return nonzero. Zones retain authored conditions; extracted geometry does not establish runtime activation or whole-game coverage.
 
@@ -101,7 +100,7 @@ Open the scripts from disk or embed them in Blender's Text Editor. Edit each scr
 ```python
 PROJECT_PATH = '../..'
 # Use an absolute path when needed:
-# PROJECT_PATH = 'C:/Users/YourName/Desktop/Endfield/RCEFBackend/VolumeTools'
+# PROJECT_PATH = 'C:/Path/To/Your/VolumeTools/Clone'
 ```
 
 Relative paths use the external script's directory, or the saved blend's directory for embedded scripts. The default `../..` works from `Source/blender/` and blends in `Exports/<date>/`; a blend directly in `Generated/` needs `..`. Unsaved embedded scripts require an absolute path. Reopen external scripts after edits or moves.
@@ -140,3 +139,11 @@ Buffer basenames remain `<category>_MapXX_{VB,IB,Edges}.buf`; categories are `In
 Vertex buffers store little-endian XYZ plus barycentric UV (`<5f>`, 20-byte stride), with one vertex per triangle corner. Index buffers use sequential little-endian uint32 indices. Export snapshots the base mesh with its world transform, including live Edit Mode edits; source meshes, UVs, selection and mode are unchanged. Evaluated modifiers are not applied.
 
 Edge buffers contain one little-endian uint32 mask per triangle, in index-buffer order. Bit `i` enables the edge opposite corner `i`. Shared coplanar edges are hidden using the exporter's `COPLANAR_ANGLE_DEGREES` setting (default `0.1`); boundaries, creases and non-manifold edges remain visible. Face fill is retained. Re-export and install all three matching buffers for the updated DrawVolume shader; edge buffers bind as `R32_UINT` at `ps-t3`.
+
+## Credits
+
+The game-data primitives and native metadata/evidence readers in `Source/gamedata`
+are adapted from Variante's [Endfield Research Kit](https://github.com/Variante/endfield_research_kit).
+They have been trimmed for VolumeTools's schema-driven wall/zone pipeline.
+The original copyright and MIT permission notice are retained in
+[`Source/gamedata/LICENSE`](Source/gamedata/LICENSE).
