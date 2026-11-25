@@ -64,8 +64,11 @@ def build(input_dir,output,regions,kinds,config,evidence):
     input_dir, output = Path(input_dir), Path(output)
     datasets={(r,k):[] for r in regions for k in kinds}
     errors=[]; unresolved=[]; prefixes=[]; files=collections.Counter()
-    paths=sorted(p for p in (input_dir/'Data/Json/LevelData').rglob('*.json')
-                 if any(p.name.startswith(r+'_') for r in regions))
+    level_data = input_dir / 'Data/Json/LevelData'
+    excluded = set(config.get('excluded_level_data', []))
+    paths=sorted(p for p in level_data.rglob('*.json')
+                 if any(p.name.startswith(r+'_') for r in regions)
+                 and p.relative_to(level_data).as_posix() not in excluded)
     if not paths: raise FileNotFoundError('No selected LevelData inputs')
     jobs=config.get('jobs',1)
     for completed,result in enumerate(map_files(scan_file, paths, jobs=jobs, initializer=initialize_worker,
