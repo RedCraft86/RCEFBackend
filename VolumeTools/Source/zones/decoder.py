@@ -31,8 +31,8 @@ class ZoneCodec:
         result=self.memorypack.read_i32(data,offset)
         if result is None: raise ValueError('Truncated string reference at '+str(offset))
         value,end=result
-        if value==-1: return None,end
-        if value==-2: return '',end
+        if value==-2: return None,end
+        if value==-1: return '',end
         if value<0: raise ValueError('Unsupported negative string reference at '+str(offset))
         return {'stringReference':value},end
 

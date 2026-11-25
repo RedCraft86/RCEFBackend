@@ -83,7 +83,7 @@ python -B process_game_data.py --prepare-native
 python -B process_game_data.py
 ```
 
-Native evidence is derived using the local `Source/gamedata` readers. Native evidence version 3 supports the current 15-member function-area layout, generated union routes, and the native four-byte string-reference formatter. String references are retained as `{"stringReference": id}`; their text is unresolved. The native LevelData schema and its function-area declarations are required; the legacy handwritten fallback has been removed. Regenerate missing or incomplete evidence with `--prepare-native`. Saved inputs with matching native hashes can then be reused with `--decode-only`; 13-member inputs and build mismatches remain unsupported.
+Native evidence is derived using the local `Source/gamedata` readers. Native evidence version 3 supports the 15-member function-area layout and the 16-member layout with `playerCenterChannelMask`, generated union routes, and the native four-byte string-reference formatter. String references are retained as `{"stringReference": id}`; their text is unresolved. The native LevelData schema and its function-area declarations are required; the legacy handwritten fallback has been removed. Regenerate missing or incomplete evidence with `--prepare-native`. Saved inputs with matching native hashes can then be reused with `--decode-only`; 13-member inputs and build mismatches remain unsupported.
 
 Datasets go to `Generated/InvisWalls` and `Generated/Zones`; native evidence lives in `Generated/Native`. Check `Generated/processing-report.json` for decoding results. Replaced datasets are backed up, and failures return nonzero. Zones retain authored conditions; extracted geometry does not establish runtime activation or whole-game coverage.
 

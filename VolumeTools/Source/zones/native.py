@@ -1,6 +1,8 @@
 """Prepare and validate VolumeTools evidence against local native copies."""
 import hashlib
+import re
 import shutil
+import struct
 from pathlib import Path
 from Source.workflow import resolve_path, timestamp, write_json
 
@@ -20,6 +22,9 @@ BASE_LAYOUT = [
     ('shapeType', 'Beyond.Gameplay.Core.TriggerObserverComponent+Shape'),
     ('size', 'UnityEngine.Vector3'), ('uniqueId', 'ulong'),
 ]
+BASE_LAYOUT_WITH_CHANNEL_MASK = BASE_LAYOUT[:9] + [
+    ('playerCenterChannelMask', 'Beyond.Gameplay.FunctionAreaManager+EPlayerCenterChannelMask'),
+] + BASE_LAYOUT[9:]
 HIDE_LAYOUT = [(name, 'bool') for name in (
     'hideAllBuildingUI', 'hideFacBuilding', 'hideFacBuildingAll', 'hideFacFence', 'hideSocialFac'
 )] + [('hideSocialFacOwner', 'Beyond.Gameplay.Factory.SocialFragment+EOwner'),
@@ -96,7 +101,10 @@ def validate_schema(evidence):
     if evidence.get('stringWireFormat') != 'int32-reference':
         raise ValueError('Current string formatter evidence missing; run process_game_data.py --prepare-native')
     validate_prefix_schema(schemas)
-    base = validate_layout(schemas, BASE_TYPE, BASE_LAYOUT)
+    base_layout = (BASE_LAYOUT_WITH_CHANNEL_MASK
+                   if 'playerCenterChannelMask' in schemas.get(BASE_TYPE, {}).get('memberOrder', [])
+                   else BASE_LAYOUT)
+    base = validate_layout(schemas, BASE_TYPE, base_layout)
     hide = validate_layout(schemas, HIDE_TYPE, HIDE_LAYOUT)
     widths = evidence.get('enumWidths', {})
     if not isinstance(widths, dict) or any(type(w) is not int or w not in (1, 2, 4, 8) for w in widths.values()):
@@ -106,10 +114,12 @@ def validate_schema(evidence):
         if enum not in widths:
             raise ValueError('Missing native enum width: ' + enum)
     for member in base['members'] + hide['members']:
-        if member['kind'] == 'enum' and member.get('width') != 4:
+        if (member['kind'] == 'enum' and member['name'] != 'playerCenterChannelMask'
+                and member.get('width') != 4):
             raise ValueError(f'Unsupported function-area enum width for {member["declaredType"]}: '
                              f'expected 4, actual {member.get("width")!r}')
-        if member['kind'] == 'enum' and widths.get(member['declaredType']) != member.get('width'):
+        if member['kind'] == 'enum' and (member['declaredType'] not in widths
+                                        or widths[member['declaredType']] != member.get('width')):
             raise ValueError('Native enum width disagrees with member: ' + member['declaredType'])
     for enum, values in {
         'Beyond.Gameplay.EFunctionAreaType': {'RepatriateZone': 1, 'TempRepatriateZone': 15},
@@ -151,6 +161,45 @@ def load_evidence(config, check_installed=False):
     if check_installed:
         verify_hashes(evidence['nativeInputs'], installed_paths(config), 'Installed')
     return evidence
+
+def string_formatter_evidence(image, start):
+    def relative_target(address, code, offset):
+        return address + offset + 5 + struct.unpack_from('<i', code, offset + 1)[0]
+
+    body = start
+    code = image.pe.bytes_at_va(start, 320)
+    # New builds outline the reader and leave a call followed by the result store.
+    if code.startswith(bytes.fromhex('40534883ec20488bca498bd8e8')):
+        body = relative_target(start, code, 12)
+        code = image.pe.bytes_at_va(body, 0xa00)
+        read = re.search(
+            rb'\x83\x7d\x30\x04\x0f\x8d(.{4})', code, re.DOTALL)
+        if read:
+            offset = read.end() + struct.unpack('<i', read[1])[0]
+            advance = re.match(
+                rb'\x48\x8b\x45\x50\x44\x8b\x30\x8b\x75\x30\x83\xc6\xfc'
+                rb'\x79.\xba\x04\x00\x00\x00\x48\x8b\xcd\xe8.{4}\x84\xc0\x75.'
+                rb'\x48\x83\x45\x50\x04\x83\x45\x40\x04\x83\x45\x44\x04\x89\x75\x30'
+                rb'\x41\x83\xfe\xfe\x0f\x84(.{4})\x41\x83\xfe\xff\x0f\x84(.{4})',
+                code[offset:], re.DOTALL)
+            resolver = re.search(
+                rb'\x45\x33\xc0\x41\x8b\xd6\x48\x8b\xcf\x48\x83\xc4\x50\x41\x5e\x5f\x5e\x5d\x5b\xe9',
+                code[offset:]) if advance else None
+            if resolver:
+                null_at = offset + advance.end(1) + struct.unpack('<i', advance[1])[0]
+                empty_at = offset + advance.end(2) + struct.unpack('<i', advance[2])[0]
+                target = relative_target(body, code, offset + resolver.end() - 1)
+                if code.startswith(b'\x33\xc0', null_at) and code.startswith(b'\x48\x8b\x05', empty_at):
+                    return {'dispatcherVa': hex(start), 'readerVa': hex(body), 'resolverVa': hex(target),
+                            'codeWindowHex': code[:null_at + 2].hex()}
+    else:
+        resolver = code.find(bytes.fromhex('4533c08bd6488bcbe8'))
+        if resolver >= 0 and all(bytes.fromhex(pattern) in code for pattern in
+                                 ('837b3004', '8b30', '83fefe', '83feff')):
+            return {'dispatcherVa': hex(start), 'resolverVa': hex(relative_target(start, code, resolver + 8)),
+                    'codeWindowHex': code.hex()}
+    raise ValueError(f'Unsupported native pooled-string formatter shape at {start:#x} (reader {body:#x})')
+
 
 def prepare(config):
     output = resolve_path(config['output'])
@@ -202,22 +251,14 @@ def prepare(config):
         if len(matches) != 1:
             raise ValueError('Ambiguous native formatter method: ' + owner + '.' + name)
         return image.method_pointer_va(matches[0])
-    import struct
     start = method('MemoryPack.BeyondStringFormatter', 'Deserialize')
-    code = image.pe.bytes_at_va(start, 320)
-    resolver_call = code.find(b'\x45\x33\xc0\x8b\xd6\x48\x8b\xcb\xe8')
-    if (resolver_call < 0 or b'\x83\x7b\x30\x04' not in code or b'\x8b\x30' not in code
-            or b'\x83\xfe\xfe' not in code or b'\x83\xfe\xff' not in code):
-        raise ValueError('Unsupported native pooled-string formatter shape')
-    at = resolver_call + 8
-    target = start + at + 5 + struct.unpack_from('<i', code, at+1)[0]
+    string_formatter = string_formatter_evidence(image, start)
     defaults = field_defaults(image.metadata)
     enum_names = ('Beyond.Gameplay.EFunctionAreaType', 'Beyond.Gameplay.Core.TriggerObserverComponent+Shape', 'Beyond.Gameplay.RepatriateRealSource', 'Proto.SCENE_CROSS_BORDER_OP', 'Proto.SCENE_CROSS_BORDER_REASON')
     enums = {name: {row['name']: row['id'] for row in native_enum_members(image.metadata, defaults, image.pe, image.registration, name)} for name in enum_names}
     evidence = {'format': FORMAT, 'version': VERSION, 'nativeInputs': hashes, 'families': families,
                 'stringWireFormat': 'int32-reference',
-                'stringFormatter': {'dispatcherVa': hex(start), 'resolverVa': hex(target),
-                                    'codeWindowHex': code.hex()},
+                'stringFormatter': string_formatter,
                 'enumWidths': enum_widths_from_image(image),
                 'unmanagedSizes': unmanaged_value_sizes_from_image(image),
                 'enumConstants': enums, 'wrappers': {w.wrapped_type: w.row() for w in wrappers.values() if w.wrapped_type},
