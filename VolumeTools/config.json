@@ -16,9 +16,6 @@
 		"death",
 		"tp"
 	],
-	"excluded_level_data": [
-		"map02_lv011/map02_lv011_lv_data_sub_01.json"
-	],
 	"walls": {
 		"accepted_signatures": [
 			[

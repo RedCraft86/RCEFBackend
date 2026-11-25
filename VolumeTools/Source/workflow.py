@@ -36,10 +36,6 @@ def load_config(path=None):
         raise ValueError('types must select walls, death, or tp')
     config['types'] = list(dict.fromkeys(selected))
     config['kinds'] = ['teleport' if t == 'tp' else t for t in selected if t != 'walls']
-    excluded_level_data = config.get('excluded_level_data', [])
-    if not isinstance(excluded_level_data, list) or any(
-            not isinstance(path, str) or not path for path in excluded_level_data):
-        raise ValueError('excluded_level_data must be a list of LevelData paths')
     if 'walls' in selected:
         walls = config.get('walls', {})
         for key in ('accepted_signatures', 'excluded_source_suffixes', 'maximum_compound_boxes', 'maximum_decoded_bytes'):

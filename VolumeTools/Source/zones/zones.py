@@ -11,6 +11,7 @@ _CODEC = None
 _INPUT = None
 _KINDS = None
 _REGIONS = None
+MAIN_CHAR_CHANNEL = 1  # EPlayerCenterChannelMask.MainChar
 
 
 def initialize_worker(config, evidence, input_dir, regions, kinds):
@@ -46,6 +47,8 @@ def scan_file(path):
             if not settings or settings['storedType']!='Beyond.Gameplay.LevelFunctionAreaData+RepatriateZoneData': raise ValueError('Function type does not join to RepatriateZoneData')
             kind='teleport' if settings['useRepatriateZoneType'] else 'death'
             if kind not in _KINDS: continue
+            if kind == 'death' and not (base.get('playerCenterChannelMask', MAIN_CHAR_CHANNEL) & MAIN_CHAR_CHANNEL):
+                continue
             try:
                 geometry=reconstruct(base,ranges[row_index])
                 if base['hasCondition'] and not any(str(c.get('uniqueId'))==base['uniqueId'] for c in conditions):
@@ -64,11 +67,8 @@ def build(input_dir,output,regions,kinds,config,evidence):
     input_dir, output = Path(input_dir), Path(output)
     datasets={(r,k):[] for r in regions for k in kinds}
     errors=[]; unresolved=[]; prefixes=[]; files=collections.Counter()
-    level_data = input_dir / 'Data/Json/LevelData'
-    excluded = set(config.get('excluded_level_data', []))
-    paths=sorted(p for p in level_data.rglob('*.json')
-                 if any(p.name.startswith(r+'_') for r in regions)
-                 and p.relative_to(level_data).as_posix() not in excluded)
+    paths=sorted(p for p in (input_dir/'Data/Json/LevelData').rglob('*.json')
+                 if any(p.name.startswith(r+'_') for r in regions))
     if not paths: raise FileNotFoundError('No selected LevelData inputs')
     jobs=config.get('jobs',1)
     for completed,result in enumerate(map_files(scan_file, paths, jobs=jobs, initializer=initialize_worker,
